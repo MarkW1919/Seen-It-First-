@@ -12,8 +12,20 @@ export async function login(email: string, password: string) {
   return { user, token };
 }
 
+export async function loginDemo() {
+  api.setDemoMode(true);
+  const token = await api.login("demo@reposcanpro.com", "demo");
+  api.setToken(token.access_token);
+
+  const user = await api.getMe();
+  useAppStore.getState().setAuth(user, token);
+
+  return { user, token };
+}
+
 export async function logout() {
   api.setToken(null);
+  api.setDemoMode(false);
   useAppStore.getState().logout();
 }
 
@@ -37,6 +49,10 @@ export async function refreshAuth(): Promise<Token | null> {
 export function initAuth() {
   const store = useAppStore.getState();
   if (store.token?.access_token) {
+    // If persisted token is the demo token, re-enable demo mode
+    if (store.token.access_token === "demo-token") {
+      api.setDemoMode(true);
+    }
     api.setToken(store.token.access_token);
   }
 }

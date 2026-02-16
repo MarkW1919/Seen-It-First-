@@ -12,9 +12,9 @@ export default function HistoryView() {
     queryFn: () => api.getDetections({ page, page_size: pageSize }),
   });
 
-  const { data: stats } = useQuery({
+  const { data: stats } = useQuery<{ total_reads: number; unique_plates: number }>({
     queryKey: ["plate-stats"],
-    queryFn: () => api.getPlateStats(),
+    queryFn: () => api.getPlateStats() as Promise<{ total_reads: number; unique_plates: number }>,
   });
 
   const totalPages = data ? Math.ceil(data.total / pageSize) : 0;
@@ -28,13 +28,13 @@ export default function HistoryView() {
           <div className="grid grid-cols-3 gap-3">
             <div className="card text-center py-2">
               <p className="text-2xl font-bold text-primary-400">
-                {(stats as { total_reads: number }).total_reads}
+                {stats.total_reads}
               </p>
               <p className="text-xs text-slate-500">Total Reads</p>
             </div>
             <div className="card text-center py-2">
               <p className="text-2xl font-bold text-success-400">
-                {(stats as { unique_plates: number }).unique_plates}
+                {stats.unique_plates}
               </p>
               <p className="text-xs text-slate-500">Unique Plates</p>
             </div>
