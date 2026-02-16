@@ -1,0 +1,74 @@
+{
+  "dashboard": {
+    "title": "RepoScan Pro - System Dashboard",
+    "uid": "reposcan-system",
+    "panels": [
+      {
+        "title": "API Request Rate",
+        "type": "graph",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+        "targets": [
+          {
+            "expr": "rate(http_requests_total[5m])",
+            "legendFormat": "{{method}} {{handler}}"
+          }
+        ]
+      },
+      {
+        "title": "API Latency (p95)",
+        "type": "graph",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))",
+            "legendFormat": "p95"
+          }
+        ]
+      },
+      {
+        "title": "Active WebSocket Connections",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 6, "x": 0, "y": 8 },
+        "targets": [
+          {
+            "expr": "websocket_connections_active",
+            "legendFormat": "connections"
+          }
+        ]
+      },
+      {
+        "title": "Detection Rate",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 6, "x": 6, "y": 8 },
+        "targets": [
+          {
+            "expr": "rate(detections_total[5m]) * 60",
+            "legendFormat": "detections/min"
+          }
+        ]
+      },
+      {
+        "title": "Hot List Alerts",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 6, "x": 12, "y": 8 },
+        "targets": [
+          {
+            "expr": "hotlist_alerts_total",
+            "legendFormat": "total alerts"
+          }
+        ]
+      },
+      {
+        "title": "GPU Temperature",
+        "type": "gauge",
+        "gridPos": { "h": 4, "w": 6, "x": 18, "y": 8 },
+        "targets": [
+          {
+            "expr": "gpu_temperature_celsius",
+            "legendFormat": "GPU temp"
+          }
+        ]
+      }
+    ]
+  }
+}

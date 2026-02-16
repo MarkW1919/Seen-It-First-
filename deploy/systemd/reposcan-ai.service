@@ -1,0 +1,15 @@
+[Unit]
+Description=RepoScan Pro - AI Pipeline
+After=reposcan.service
+PartOf=reposcan.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/reposcan
+ExecStart=/usr/bin/docker compose up ai
+ExecStop=/usr/bin/docker compose stop ai
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=reposcan.service

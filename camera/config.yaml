@@ -1,0 +1,72 @@
+# ─── RepoScan Pro Camera Configuration ───
+# Sony Starvis 2 IMX685 via MIPI CSI-2
+
+camera:
+  source: 0  # /dev/video0 or CSI camera index
+  type: "csi"  # csi, usb, rtsp
+  width: 1920
+  height: 1080
+  fps: 30
+  format: "NV12"
+
+sensor:
+  # Sony IMX685 Starvis 2
+  sensor_mode: 0
+  exposure_range: [0.001, 0.033]  # 1ms to 33ms
+  gain_range: [1.0, 16.0]
+  white_balance: "auto"
+  auto_exposure: true
+  hdr_mode: false
+
+gstreamer:
+  # Jetson CSI pipeline
+  pipeline: >
+    nvarguscamerasrc sensor-id=0 sensor-mode=0
+    ! video/x-raw(memory:NVMM),width=1920,height=1080,framerate=30/1,format=NV12
+    ! nvvidconv flip-method=0
+    ! video/x-raw,format=BGRx
+    ! videoconvert
+    ! video/x-raw,format=BGR
+    ! appsink drop=1 max-buffers=2
+
+  # USB camera fallback
+  usb_pipeline: >
+    v4l2src device=/dev/video0
+    ! video/x-raw,width=1920,height=1080,framerate=30/1
+    ! videoconvert
+    ! video/x-raw,format=BGR
+    ! appsink drop=1 max-buffers=2
+
+ptz:
+  enabled: false
+  serial_port: "/dev/ttyUSB0"
+  baud_rate: 9600
+  protocol: "pelco_d"
+  address: 1
+  pan_range: [-170, 170]
+  tilt_range: [-30, 90]
+  zoom_range: [1, 30]
+  speed_range: [1, 63]
+
+night_vision:
+  auto_switch: true
+  lux_threshold: 10.0
+  ir_led_gpio: 18
+  ir_cut_gpio: 23
+  transition_delay: 2.0
+
+rtsp:
+  enabled: true
+  port: 8554
+  path: "/stream"
+  codec: "h264"  # h264, h265
+  bitrate: 4000000
+  keyframe_interval: 30
+
+preprocessing:
+  clahe: true
+  clahe_clip_limit: 2.0
+  clahe_grid_size: [8, 8]
+  denoise: true
+  denoise_strength: 5
+  sharpen: false
