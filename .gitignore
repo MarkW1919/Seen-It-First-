@@ -1,0 +1,65 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.venv/
+venv/
+env/
+
+# Node
+node_modules/
+frontend/dist/
+frontend/build/
+*.tsbuildinfo
+
+# Environment
+.env
+.env.local
+.env.production
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# AI Models (large binary files)
+ai/models/*.onnx
+ai/models/*.engine
+ai/models/*.trt
+ai/models/*.pt
+ai/models/*.pth
+
+# Database
+*.db
+*.sqlite3
+
+# Logs
+*.log
+logs/
+
+# Docker
+docker-compose.override.yml
+
+# Coverage
+htmlcov/
+.coverage
+.pytest_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Captures & temp data
+captures/
+tmp/

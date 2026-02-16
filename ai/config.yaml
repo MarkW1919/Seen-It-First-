@@ -1,0 +1,59 @@
+# ─── RepoScan Pro AI Pipeline Configuration ───
+
+device: "cuda"  # cuda, cpu
+precision: "fp16"  # fp32, fp16, int8
+
+# Vehicle Detection (YOLOv8n)
+vehicle_detector:
+  model_path: "models/yolov8n_vehicles.engine"
+  onnx_path: "models/yolov8n_vehicles.onnx"
+  input_size: [640, 640]
+  confidence_threshold: 0.5
+  nms_threshold: 0.45
+  classes: ["car", "truck", "suv", "van", "motorcycle", "bus"]
+  batch_size: 1
+
+# License Plate Detection (YOLOv8n)
+plate_detector:
+  model_path: "models/yolov8n_plates.engine"
+  onnx_path: "models/yolov8n_plates.onnx"
+  input_size: [640, 640]
+  confidence_threshold: 0.6
+  nms_threshold: 0.4
+  batch_size: 1
+
+# Plate OCR (CRNN)
+plate_ocr:
+  model_path: "models/crnn_plate_ocr.engine"
+  onnx_path: "models/crnn_plate_ocr.onnx"
+  input_size: [200, 48]  # Width x Height
+  confidence_threshold: 0.7
+  charset: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+  max_plate_length: 8
+  # State-specific plate formats for validation
+  validate_format: true
+
+# Vehicle Classifier (EfficientNet-B0)
+vehicle_classifier:
+  model_path: "models/efficientnet_ymm.engine"
+  onnx_path: "models/efficientnet_ymm.onnx"
+  input_size: [224, 224]
+  confidence_threshold: 0.5
+
+# Multi-Object Tracker (DeepSORT)
+tracker:
+  max_age: 30  # Frames before track deletion
+  min_hits: 3  # Minimum detections before track confirmation
+  iou_threshold: 0.3
+  max_cosine_distance: 0.4
+  nn_budget: 100
+  embedding_model_path: "models/deepsort_reid.engine"
+
+# Pipeline
+pipeline:
+  max_fps: 30
+  skip_frames: 0  # Process every Nth frame (0 = every frame)
+  save_captures: true
+  capture_dir: "/data/captures"
+  thumbnail_size: [320, 240]
+  api_endpoint: "http://backend:8000/api/detections/"
