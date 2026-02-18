@@ -153,6 +153,7 @@ class InferencePipeline:
         longitude: float | None = None,
         heading: float | None = None,
         speed: float | None = None,
+        is_night: bool = False,
     ) -> list[dict]:
         """Process a single frame through the complete pipeline.
 
@@ -163,9 +164,10 @@ class InferencePipeline:
             longitude: GPS longitude
             heading: GPS heading in degrees
             speed: Speed in mph
+            is_night: Whether the camera is in night/IR mode
 
         Returns:
-            List of detection results
+            List of detection results (duplicates filtered)
         """
         self._frame_count += 1
 
@@ -223,22 +225,35 @@ class InferencePipeline:
             for plate_det in plate_detections:
                 plate_bbox = plate_det["bbox"]
                 plate_img = self.plate_detector.extract_plate_image(
-                    vehicle_img, plate_bbox
+                    vehicle_img, plate_bbox, is_night=is_night
                 )
 
-                # 3c. OCR the plate
-                ocr_result = self.plate_ocr.read(plate_img)
+                # Compute full-frame plate bbox (accounting for padding offset)
+                pad_frac = 0.1  # matches extract_plate_image default
+                pad_x = int(plate_bbox[2] * pad_frac)
+                pad_y = int(plate_bbox[3] * pad_frac)
+                full_plate_bbox = [
+                    bbox[0] + max(0, plate_bbox[0] - pad_x),
+                    bbox[1] + max(0, plate_bbox[1] - pad_y),
+                    plate_bbox[2] + 2 * pad_x,
+                    plate_bbox[3] + 2 * pad_y,
+                ]
+
+                # 3c. OCR the plate (with state, bbox for merging)
+                ocr_result = self.plate_ocr.read(
+                    plate_img,
+                    plate_bbox=full_plate_bbox,
+                )
                 if ocr_result:
+                    # Skip duplicates (same plate seen within TTL)
+                    if ocr_result.get("is_duplicate"):
+                        continue
+
                     plate_read = {
                         "plate_text": ocr_result["plate_text"],
                         "confidence": ocr_result["confidence"],
                         "raw_ocr": ocr_result["raw_ocr"],
-                        "plate_bbox": [
-                            bbox[0] + plate_bbox[0],
-                            bbox[1] + plate_bbox[1],
-                            plate_bbox[2],
-                            plate_bbox[3],
-                        ],
+                        "plate_bbox": full_plate_bbox,
                     }
 
                     if self.save_captures:
@@ -254,16 +269,17 @@ class InferencePipeline:
 
             results.append(result)
 
-            # Non-blocking dispatch to API
-            try:
-                self._dispatch_queue.put_nowait(result)
-            except asyncio.QueueFull:
-                logger.debug("Dispatch queue full, dropping oldest detection")
+            # Non-blocking dispatch to API (only if we have plate reads or high-conf vehicle)
+            if result["plate_reads"] or det["confidence"] > 0.8:
                 try:
-                    self._dispatch_queue.get_nowait()
                     self._dispatch_queue.put_nowait(result)
-                except asyncio.QueueEmpty:
-                    pass
+                except asyncio.QueueFull:
+                    logger.debug("Dispatch queue full, dropping oldest detection")
+                    try:
+                        self._dispatch_queue.get_nowait()
+                        self._dispatch_queue.put_nowait(result)
+                    except asyncio.QueueEmpty:
+                        pass
 
         # Performance tracking
         elapsed_ms = (time.monotonic() - start_time) * 1000

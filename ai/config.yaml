@@ -23,6 +23,11 @@ plate_detector:
   confidence_threshold: 0.6
   nms_threshold: 0.4
   batch_size: 1
+  perspective_correction: true
+  blur_mitigation: true
+  night_enhance: true
+  min_plate_width: 40
+  min_plate_height: 12
 
 # Plate OCR (CRNN)
 plate_ocr:
@@ -30,10 +35,16 @@ plate_ocr:
   onnx_path: "models/crnn_plate_ocr.onnx"
   input_size: [200, 48]  # Width x Height
   confidence_threshold: 0.7
+  char_confidence_min: 0.4  # Min per-character confidence
   charset: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
   max_plate_length: 8
-  # State-specific plate formats for validation
+  min_plate_length: 2
   validate_format: true
+  confusion_correction: true  # O/0, I/1, S/5, B/8 correction
+  duplicate_ttl: 3.0  # Seconds to suppress duplicate plates
+  duplicate_cache_size: 256
+  partial_merge_ttl: 2.0  # Seconds to merge partial reads
+  partial_merge_iou: 0.5  # IoU threshold for bbox matching
 
 # Vehicle Classifier (EfficientNet-B0)
 vehicle_classifier:
