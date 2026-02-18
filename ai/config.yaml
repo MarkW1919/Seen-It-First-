@@ -51,11 +51,17 @@ vehicle_classifier:
   model_path: "models/efficientnet_ymm.engine"
   onnx_path: "models/efficientnet_ymm.onnx"
   input_size: [224, 224]
-  confidence_threshold: 0.5
+  confidence_threshold: 0.5  # Global fallback threshold
+  make_confidence_threshold: 0.5
+  model_confidence_threshold: 0.5
+  year_confidence_threshold: 0.5
+  color_confidence_threshold: 0.3  # Colors are easier to classify
   make_labels_path: "models/labels/makes.json"
   model_labels_path: "models/labels/models.json"
   year_labels_path: "models/labels/years.json"
   color_labels_path: "models/labels/colors.json"
+  cache_ttl: 10.0  # Seconds to cache per-track classification
+  cache_size: 128  # Max cached track classifications
 
 # Multi-Object Tracker (DeepSORT)
 tracker:

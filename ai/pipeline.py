@@ -188,6 +188,12 @@ class InferencePipeline:
         # 2. Update tracker
         confirmed_tracks = self.tracker.update(vehicle_detections)
 
+        # Build track ID lookup for classification caching
+        track_by_bbox: dict[tuple, int] = {}
+        for track in confirmed_tracks:
+            tb = tuple(track.bbox)
+            track_by_bbox[tb] = track.track_id
+
         # 3. For each detected vehicle, detect plates and classify
         for det in vehicle_detections:
             bbox = det["bbox"]
@@ -197,6 +203,9 @@ class InferencePipeline:
                 continue
 
             frame_ts = timestamp or time.time()
+
+            # Find matching track ID for this detection (by closest bbox)
+            det_track_id = self._find_track_id(bbox, track_by_bbox)
 
             result = {
                 "id": str(uuid.uuid4()),
@@ -211,15 +220,7 @@ class InferencePipeline:
                 "timestamp": datetime.fromtimestamp(frame_ts, tz=timezone.utc).isoformat(),
             }
 
-            # 3a. Classify vehicle
-            classification = self.vehicle_classifier.classify(vehicle_img)
-            if classification:
-                result["vehicle_make"] = classification.get("make")
-                result["vehicle_model"] = classification.get("model")
-                result["vehicle_year"] = classification.get("year")
-                result["vehicle_color"] = classification.get("color")
-
-            # 3b. Detect plates within vehicle region
+            # 3a. Detect plates first (higher priority than classification)
             plate_detections = self.plate_detector.detect(vehicle_img)
 
             for plate_det in plate_detections:
@@ -239,7 +240,7 @@ class InferencePipeline:
                     plate_bbox[3] + 2 * pad_y,
                 ]
 
-                # 3c. OCR the plate (with state, bbox for merging)
+                # 3b. OCR the plate (with state, bbox for merging)
                 ocr_result = self.plate_ocr.read(
                     plate_img,
                     plate_bbox=full_plate_bbox,
@@ -261,6 +262,16 @@ class InferencePipeline:
                         plate_read["plate_image_path"] = plate_path
 
                     result["plate_reads"].append(plate_read)
+
+            # 3c. Classify vehicle (after plates — lower priority, uses track cache)
+            classification = self.vehicle_classifier.classify(
+                vehicle_img, track_id=det_track_id
+            )
+            if classification:
+                result["vehicle_make"] = classification.get("make")
+                result["vehicle_model"] = classification.get("model")
+                result["vehicle_year"] = classification.get("year")
+                result["vehicle_color"] = classification.get("color")
 
             if self.save_captures and (result["plate_reads"] or det["confidence"] > 0.8):
                 img_path, thumb_path = self._save_capture(frame, bbox)
@@ -346,6 +357,40 @@ class InferencePipeline:
             logger.warning(f"Failed to send detection to API: {e}")
         except Exception as e:
             logger.warning(f"Unexpected dispatch error: {e}")
+
+    @staticmethod
+    def _find_track_id(
+        det_bbox: list[int], track_by_bbox: dict[tuple, int]
+    ) -> int | None:
+        """Find the track ID whose bbox best matches a detection bbox.
+
+        Uses IoU matching to associate detections with confirmed tracks.
+        Returns None if no track overlaps sufficiently (IoU > 0.3).
+        """
+        if not track_by_bbox:
+            return None
+
+        best_id = None
+        best_iou = 0.3  # minimum IoU threshold
+
+        dx, dy, dw, dh = det_bbox
+        da = dw * dh
+        if da <= 0:
+            return None
+
+        for (tx, ty, tw, th), tid in track_by_bbox.items():
+            ix1 = max(dx, tx)
+            iy1 = max(dy, ty)
+            ix2 = min(dx + dw, tx + tw)
+            iy2 = min(dy + dh, ty + th)
+            inter = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+            union = da + tw * th - inter
+            iou = inter / max(union, 1e-6)
+            if iou > best_iou:
+                best_iou = iou
+                best_id = tid
+
+        return best_id
 
     def _crop(self, frame: np.ndarray, bbox: list[int]) -> np.ndarray:
         h, w = frame.shape[:2]
