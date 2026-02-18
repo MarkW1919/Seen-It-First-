@@ -1,5 +1,7 @@
 """EfficientNet-based vehicle Year/Make/Model/Color classifier."""
+import json
 import logging
+import os
 
 import cv2
 import numpy as np
@@ -8,11 +10,38 @@ from ai.tensorrt_utils import TRTEngine
 
 logger = logging.getLogger(__name__)
 
-# Common vehicle colors
+# Common vehicle colors (fallback if no label file provided)
 COLORS = [
     "black", "white", "silver", "gray", "red", "blue", "brown",
     "green", "beige", "gold", "orange", "yellow", "purple", "maroon",
 ]
+
+
+def _load_labels(path: str | None) -> list[str]:
+    """Load labels from a JSON file.
+
+    Args:
+        path: Path to a JSON file containing a list of label strings.
+
+    Returns:
+        List of label strings, or empty list if path is None or load fails.
+    """
+    if not path:
+        return []
+    try:
+        with open(path) as f:
+            labels = json.load(f)
+        if isinstance(labels, list) and all(isinstance(l, str) for l in labels):
+            logger.info("Loaded %d labels from %s", len(labels), path)
+            return labels
+        logger.warning("Label file %s does not contain a list of strings", path)
+        return []
+    except FileNotFoundError:
+        logger.warning("Label file not found: %s", path)
+        return []
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning("Failed to load labels from %s: %s", path, e)
+        return []
 
 
 class VehicleClassifier:
@@ -26,11 +55,11 @@ class VehicleClassifier:
             onnx_path=config.get("onnx_path"),
         )
 
-        # These would be loaded from a label file in production
-        self.make_labels: list[str] = []
-        self.model_labels: list[str] = []
-        self.year_labels: list[str] = []
-        self.color_labels = COLORS
+        # Load labels from config-specified JSON files
+        self.make_labels = _load_labels(config.get("make_labels_path"))
+        self.model_labels = _load_labels(config.get("model_labels_path"))
+        self.year_labels = _load_labels(config.get("year_labels_path"))
+        self.color_labels = _load_labels(config.get("color_labels_path")) or COLORS
 
     def preprocess(self, vehicle_img: np.ndarray) -> np.ndarray:
         """Preprocess vehicle image for EfficientNet."""
@@ -69,7 +98,6 @@ class VehicleClassifier:
         outputs = self.engine.infer(blob)
 
         # Expected outputs: [make_logits, model_logits, year_logits, color_logits]
-        # Structure depends on model training
         result = {"confidence": 0.0}
 
         if len(outputs) >= 1 and self.make_labels:

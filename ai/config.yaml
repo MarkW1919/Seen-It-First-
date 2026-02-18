@@ -2,6 +2,8 @@
 
 device: "cuda"  # cuda, cpu
 precision: "fp16"  # fp32, fp16, int8
+workspace_gb: 1  # TensorRT builder workspace
+dla_core: -1  # -1 = disabled, 0 or 1 = DLA core index
 
 # Vehicle Detection (YOLOv8n)
 vehicle_detector:
@@ -39,6 +41,10 @@ vehicle_classifier:
   onnx_path: "models/efficientnet_ymm.onnx"
   input_size: [224, 224]
   confidence_threshold: 0.5
+  make_labels_path: "models/labels/makes.json"
+  model_labels_path: "models/labels/models.json"
+  year_labels_path: "models/labels/years.json"
+  color_labels_path: "models/labels/colors.json"
 
 # Multi-Object Tracker (DeepSORT)
 tracker:
@@ -47,6 +53,7 @@ tracker:
   iou_threshold: 0.3
   max_cosine_distance: 0.4
   nn_budget: 100
+  max_track_detections: 10  # Bounded history per track
   embedding_model_path: "models/deepsort_reid.engine"
 
 # Pipeline

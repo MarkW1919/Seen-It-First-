@@ -23,8 +23,15 @@ class CameraController:
     """Main controller that integrates all camera subsystems."""
 
     def __init__(self, config_path: str = "config.yaml"):
-        with open(config_path) as f:
-            self.config = yaml.safe_load(f)
+        try:
+            with open(config_path) as f:
+                self.config = yaml.safe_load(f)
+        except FileNotFoundError:
+            logger.error("Camera config not found: %s", config_path)
+            raise
+        except yaml.YAMLError as e:
+            logger.error("Invalid camera config YAML: %s", e)
+            raise
 
         self.capture = VideoCapture(self.config)
         self.ptz = PTZController(self.config.get("ptz", {}))
@@ -77,6 +84,30 @@ class CameraController:
 
         return frame
 
+    def get_frame_timestamped(self, preprocess: bool = True):
+        """Get the latest preprocessed frame with timestamp metadata.
+
+        Returns:
+            TimestampedFrame with processed image, or None
+        """
+        ts_frame = self.capture.read_timestamped()
+        if ts_frame is None or ts_frame.frame is None:
+            return None
+
+        frame = ts_frame.frame
+
+        # Apply distortion correction
+        if self.calibration.is_calibrated:
+            frame = self.calibration.undistort(frame)
+
+        # Apply preprocessing
+        if preprocess:
+            frame = self.preprocessor.process(frame)
+
+        # Return updated timestamped frame with processed image
+        ts_frame.frame = frame
+        return ts_frame
+
     def get_status(self) -> dict:
         """Get current camera status."""
         return {
@@ -104,9 +135,13 @@ async def main():
     """Main entry point for the camera service.
 
     Captures frames and publishes them to Redis for the AI pipeline.
-    Also publishes camera status updates.
+    Uses adaptive timing to maintain target FPS and timestamped frames
+    for pipeline synchronization.
     """
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+    )
 
     config_path = os.environ.get("CAMERA_CONFIG", "config.yaml")
     controller = CameraController(config_path)
@@ -121,25 +156,40 @@ async def main():
     redis_url = os.environ.get("REDIS_URL", "redis://redis:6379/0")
     redis_client = aioredis.from_url(redis_url)
 
-    frame_interval = 1.0 / controller.config["camera"].get("fps", 30)
+    target_fps = controller.config["camera"].get("fps", 30)
+    frame_interval = 1.0 / target_fps
     status_interval = 5.0
     last_status = 0
+    last_seq = -1
+    frames_sent = 0
+    fps_log_interval = 10.0
+    last_fps_log = time.monotonic()
 
     try:
         while True:
-            frame = controller.get_frame(preprocess=True)
+            loop_start = time.monotonic()
 
-            if frame is not None:
+            ts_frame = controller.get_frame_timestamped(preprocess=True)
+
+            if ts_frame is not None and ts_frame.sequence != last_seq:
+                last_seq = ts_frame.sequence
+                frame = ts_frame.frame
+
                 # Encode frame for Redis transport
-                _, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                _, buffer = cv2.imencode(
+                    ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80]
+                )
                 frame_hex = buffer.tobytes().hex()
 
                 frame_data = json.dumps({
                     "frame": frame_hex,
-                    "timestamp": time.time(),
+                    "timestamp": ts_frame.wall_time,
+                    "sequence": ts_frame.sequence,
+                    "fps_actual": round(ts_frame.fps_actual, 1),
                 })
 
                 await redis_client.publish("reposcan:frames", frame_data)
+                frames_sent += 1
 
             # Publish status periodically
             now = time.time()
@@ -151,7 +201,22 @@ async def main():
                 )
                 last_status = now
 
-            await asyncio.sleep(frame_interval)
+            # Log throughput periodically
+            mono_now = time.monotonic()
+            if mono_now - last_fps_log >= fps_log_interval:
+                actual = frames_sent / (mono_now - last_fps_log)
+                logger.info(
+                    "Camera publish rate: %.1f FPS (%d frames in %.0fs)",
+                    actual, frames_sent, mono_now - last_fps_log,
+                )
+                frames_sent = 0
+                last_fps_log = mono_now
+
+            # Adaptive sleep: account for processing time to hit target FPS
+            elapsed = time.monotonic() - loop_start
+            sleep_time = max(0, frame_interval - elapsed)
+            if sleep_time > 0:
+                await asyncio.sleep(sleep_time)
 
     except asyncio.CancelledError:
         pass
