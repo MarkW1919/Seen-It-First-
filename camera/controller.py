@@ -108,8 +108,12 @@ class CameraController:
         ts_frame.frame = frame
         return ts_frame
 
+    def is_ptz_moving(self) -> bool:
+        """Check if PTZ is mid-motion (frames may be blurry)."""
+        return self.ptz.is_moving
+
     def get_status(self) -> dict:
-        """Get current camera status."""
+        """Get current camera status including PTZ motion state."""
         return {
             "is_connected": self.capture.is_running,
             "resolution": f"{self.config['camera']['width']}x{self.config['camera']['height']}",
@@ -117,6 +121,8 @@ class CameraController:
             "night_mode": self.night_vision.is_night_mode,
             "ir_enabled": self.night_vision.is_ir_enabled,
             "ptz_position": self.ptz.position,
+            "ptz_motion": self.ptz.motion_state.value,
+            "ptz_connected": self.ptz.is_connected,
             "streaming": self.rtsp.is_running,
             "rtsp_url": self.rtsp.url if self.rtsp.is_running else None,
         }
@@ -169,6 +175,14 @@ async def main():
         while True:
             loop_start = time.monotonic()
 
+            # Skip frame acquisition when PTZ is moving — frames captured
+            # during motor motion are blurry and useless for LPR/inference.
+            # RTSP stream continues (viewers see the pan) but we don't push
+            # to the inference pipeline.
+            if controller.is_ptz_moving():
+                await asyncio.sleep(frame_interval)
+                continue
+
             ts_frame = controller.get_frame_timestamped(preprocess=True)
 
             if ts_frame is not None and ts_frame.sequence != last_seq:
@@ -186,6 +200,7 @@ async def main():
                     "timestamp": ts_frame.wall_time,
                     "sequence": ts_frame.sequence,
                     "fps_actual": round(ts_frame.fps_actual, 1),
+                    "ptz_position": controller.ptz.position,
                 })
 
                 await redis_client.publish("reposcan:frames", frame_data)

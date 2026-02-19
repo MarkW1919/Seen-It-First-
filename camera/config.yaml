@@ -43,10 +43,16 @@ ptz:
   baud_rate: 9600
   protocol: "pelco_d"
   address: 1
-  pan_range: [-170, 170]
-  tilt_range: [-30, 90]
+  # 360° pan: full rotation, wraps at boundaries
+  pan_range: [-180, 180]
+  # 140° tilt: -70° (down) to +70° (up)
+  tilt_range: [-70, 70]
   zoom_range: [1, 30]
   speed_range: [1, 63]
+  # Settling time (seconds) after motor stops before inference resumes
+  settle_time: 0.3
+  # Max movement timeout (seconds) before forced stop
+  max_move_timeout: 8.0
 
 night_vision:
   auto_switch: true
