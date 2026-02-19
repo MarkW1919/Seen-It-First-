@@ -1,17 +1,139 @@
+"""Hotlist service with O(1) Redis-backed cache, deduplication, and cooldown enforcement."""
+
+import asyncio
+import logging
 import uuid
 from datetime import datetime, timezone
 
+import redis.asyncio as redis
 from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.config import get_settings
 from app.models.hotlist import HotListEntry, HotListAlert
 from app.schemas.hotlist import HotListEntryCreate, HotListEntryUpdate, HotListAlertUpdate
 
+logger = logging.getLogger(__name__)
+settings = get_settings()
+
+# ─── Redis-backed O(1) Hotlist Cache ───
+
+CACHE_KEY = "reposcan:hotlist:active_plates"
+COOLDOWN_PREFIX = "reposcan:hotlist:cooldown:"
+DEFAULT_COOLDOWN_SECONDS = 300  # 5-minute cooldown between alerts for same entry
+
+
+class HotlistCache:
+    """Maintains a Redis SET of active plate texts for O(1) membership checks.
+
+    On startup, loads all active plates from the DB into a Redis set.
+    Mutations (create/update/delete) keep the cache in sync.
+    check_plate() does a single SISMEMBER call — O(1).
+    """
+
+    def __init__(self) -> None:
+        self._redis: redis.Redis | None = None
+        self._lock = asyncio.Lock()
+
+    async def connect(self) -> None:
+        self._redis = redis.from_url(settings.redis_url, decode_responses=True)
+
+    async def disconnect(self) -> None:
+        if self._redis:
+            await self._redis.close()
+
+    async def load_from_db(self, db: AsyncSession) -> None:
+        """Bulk-load all active, non-expired plate texts into the Redis set."""
+        now = datetime.now(timezone.utc)
+        result = await db.execute(
+            select(HotListEntry.plate_text).where(
+                and_(
+                    HotListEntry.is_active.is_(True),
+                    (HotListEntry.expires_at.is_(None)) | (HotListEntry.expires_at > now),
+                )
+            )
+        )
+        plates = [row[0] for row in result.all()]
+
+        if self._redis:
+            async with self._lock:
+                pipe = self._redis.pipeline()
+                pipe.delete(CACHE_KEY)
+                if plates:
+                    pipe.sadd(CACHE_KEY, *plates)
+                await pipe.execute()
+            logger.info("Hotlist cache loaded: %d active plates", len(plates))
+
+    async def is_plate_cached(self, plate_text: str) -> bool:
+        """O(1) membership check via Redis SISMEMBER."""
+        if not self._redis:
+            return False
+        return bool(await self._redis.sismember(CACHE_KEY, plate_text.upper().strip()))
+
+    async def add_plate(self, plate_text: str) -> None:
+        if self._redis:
+            await self._redis.sadd(CACHE_KEY, plate_text.upper().strip())
+
+    async def remove_plate(self, plate_text: str) -> None:
+        if self._redis:
+            await self._redis.srem(CACHE_KEY, plate_text.upper().strip())
+
+    # ─── Cooldown enforcement ───
+
+    async def check_cooldown(self, hotlist_entry_id: uuid.UUID) -> bool:
+        """Return True if the cooldown is active (alert should be suppressed)."""
+        if not self._redis:
+            return False
+        key = f"{COOLDOWN_PREFIX}{hotlist_entry_id}"
+        return bool(await self._redis.exists(key))
+
+    async def set_cooldown(self, hotlist_entry_id: uuid.UUID, seconds: int = DEFAULT_COOLDOWN_SECONDS) -> None:
+        """Set a cooldown TTL key to suppress duplicate alerts."""
+        if self._redis:
+            key = f"{COOLDOWN_PREFIX}{hotlist_entry_id}"
+            await self._redis.set(key, "1", ex=seconds)
+
+    # ─── Deduplication lock ───
+
+    async def acquire_alert_lock(self, hotlist_entry_id: uuid.UUID, detection_id: uuid.UUID) -> bool:
+        """Atomic lock to prevent duplicate alert creation under concurrent requests.
+
+        Returns True if lock was acquired (caller should proceed), False if another
+        request already holds it (caller should skip).
+        """
+        if not self._redis:
+            return True
+        key = f"reposcan:hotlist:alert_lock:{hotlist_entry_id}:{detection_id}"
+        # SET NX with 30s TTL — if the key already exists, another request won.
+        acquired = await self._redis.set(key, "1", nx=True, ex=30)
+        return bool(acquired)
+
+
+# Module-level singleton
+hotlist_cache = HotlistCache()
+
+
+# ─── Entry CRUD (cache-aware) ───
+
 
 async def create_entry(db: AsyncSession, data: HotListEntryCreate) -> HotListEntry:
+    plate = data.plate_text.upper().strip()
+
+    # Deduplicate: if an active entry with same plate already exists, return it
+    existing = await db.execute(
+        select(HotListEntry).where(
+            and_(
+                HotListEntry.plate_text == plate,
+                HotListEntry.is_active.is_(True),
+            )
+        )
+    )
+    if (found := existing.scalar_one_or_none()) is not None:
+        return found
+
     entry = HotListEntry(
-        plate_text=data.plate_text.upper().strip(),
+        plate_text=plate,
         plate_state=data.plate_state,
         case_number=data.case_number,
         lender_name=data.lender_name,
@@ -32,6 +154,9 @@ async def create_entry(db: AsyncSession, data: HotListEntryCreate) -> HotListEnt
     )
     db.add(entry)
     await db.flush()
+
+    # Sync cache
+    await hotlist_cache.add_plate(plate)
     return entry
 
 
@@ -42,6 +167,8 @@ async def update_entry(
     if not entry:
         return None
 
+    old_plate = entry.plate_text
+    old_active = entry.is_active
     update_data = data.model_dump(exclude_unset=True)
     for field, value in update_data.items():
         if field == "plate_text" and value:
@@ -49,6 +176,16 @@ async def update_entry(
         setattr(entry, field, value)
 
     await db.flush()
+
+    # Sync cache when plate text or active status changes
+    new_plate = entry.plate_text
+    new_active = entry.is_active
+    if old_plate != new_plate or old_active != new_active:
+        if old_active:
+            await hotlist_cache.remove_plate(old_plate)
+        if new_active:
+            await hotlist_cache.add_plate(new_plate)
+
     return entry
 
 
@@ -90,18 +227,31 @@ async def delete_entry(db: AsyncSession, entry_id: uuid.UUID) -> bool:
     entry = await db.get(HotListEntry, entry_id)
     if not entry:
         return False
+
+    plate = entry.plate_text
     await db.delete(entry)
     await db.flush()
+
+    # Remove from cache
+    await hotlist_cache.remove_plate(plate)
     return True
+
+
+# ─── Plate Matching (O(1) fast path + DB verification) ───
 
 
 async def check_plate_against_hotlist(
     db: AsyncSession, plate_text: str
 ) -> list[HotListEntry]:
-    """Check if a plate matches any active hot list entries."""
+    """Two-tier lookup: O(1) Redis cache check, then DB verification only on hit."""
     plate_upper = plate_text.upper().strip()
-    now = datetime.now(timezone.utc)
 
+    # Fast path: O(1) Redis SET membership check
+    if not await hotlist_cache.is_plate_cached(plate_upper):
+        return []
+
+    # Cache hit — verify against DB (handles expiration edge cases)
+    now = datetime.now(timezone.utc)
     result = await db.execute(
         select(HotListEntry).where(
             and_(
@@ -111,7 +261,16 @@ async def check_plate_against_hotlist(
             )
         )
     )
-    return list(result.scalars().all())
+    entries = list(result.scalars().all())
+
+    # If DB says no match, cache is stale — clean it up
+    if not entries:
+        await hotlist_cache.remove_plate(plate_upper)
+
+    return entries
+
+
+# ─── Alert Creation with Deduplication + Cooldown ───
 
 
 async def create_alert(
@@ -124,7 +283,27 @@ async def create_alert(
     latitude: float | None = None,
     longitude: float | None = None,
     address: str | None = None,
-) -> HotListAlert:
+) -> HotListAlert | None:
+    """Create an alert with cooldown enforcement and deduplication.
+
+    Returns None if the alert is suppressed by cooldown or lost a dedup race.
+    """
+    # 1. Cooldown check — suppress rapid re-alerts for the same hotlist entry
+    if await hotlist_cache.check_cooldown(hotlist_entry_id):
+        logger.debug(
+            "Alert suppressed by cooldown: entry=%s plate=%s",
+            hotlist_entry_id, plate_text,
+        )
+        return None
+
+    # 2. Deduplication lock — prevent concurrent requests creating duplicate alerts
+    if detection_id and not await hotlist_cache.acquire_alert_lock(hotlist_entry_id, detection_id):
+        logger.debug(
+            "Alert suppressed by dedup lock: entry=%s detection=%s",
+            hotlist_entry_id, detection_id,
+        )
+        return None
+
     alert = HotListAlert(
         hotlist_entry_id=hotlist_entry_id,
         detection_id=detection_id,
@@ -137,7 +316,14 @@ async def create_alert(
     )
     db.add(alert)
     await db.flush()
+
+    # 3. Set cooldown so the same entry won't fire again within the window
+    await hotlist_cache.set_cooldown(hotlist_entry_id)
+
     return alert
+
+
+# ─── Alert Queries ───
 
 
 async def list_alerts(

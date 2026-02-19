@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import String, Float, Boolean, DateTime, ForeignKey, Text, func
+from sqlalchemy import Index, String, Float, Boolean, DateTime, ForeignKey, Text, func
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -10,6 +10,11 @@ from app.database import Base
 
 class HotListEntry(Base):
     __tablename__ = "hotlist_entries"
+    __table_args__ = (
+        # Composite index for the primary lookup query:
+        # WHERE is_active = TRUE AND plate_text = ? AND (expires_at IS NULL OR expires_at > ?)
+        Index("ix_hotlist_active_plate_expires", "is_active", "plate_text", "expires_at"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -64,12 +69,18 @@ class HotListEntry(Base):
 
 class HotListAlert(Base):
     __tablename__ = "hotlist_alerts"
+    __table_args__ = (
+        # Index for filtering alerts by status (used by list_alerts and frontend polling)
+        Index("ix_hotlist_alerts_status_created", "status", "created_at"),
+        # Index for deduplication lookups by entry + recent time window
+        Index("ix_hotlist_alerts_entry_created", "hotlist_entry_id", "created_at"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     hotlist_entry_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("hotlist_entries.id", ondelete="CASCADE")
+        UUID(as_uuid=True), ForeignKey("hotlist_entries.id", ondelete="CASCADE"), index=True
     )
     detection_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("detections.id"), nullable=True
@@ -79,7 +90,7 @@ class HotListAlert(Base):
     )
 
     # Alert details
-    plate_text_matched: Mapped[str] = mapped_column(String(20))
+    plate_text_matched: Mapped[str] = mapped_column(String(20), index=True)
     match_confidence: Mapped[float] = mapped_column(Float)
     latitude: Mapped[float] = mapped_column(Float, nullable=True)
     longitude: Mapped[float] = mapped_column(Float, nullable=True)
