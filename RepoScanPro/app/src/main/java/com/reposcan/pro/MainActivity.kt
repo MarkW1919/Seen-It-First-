@@ -19,9 +19,12 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.navigation.NavHostController
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.reposcan.pro.ui.components.BottomNavBar
@@ -52,75 +55,85 @@ fun RepoScanApp() {
     val loginState by loginViewModel.state.collectAsState()
 
     if (loginState.user == null) {
-        // Show login screen
         LoginScreen(
             state = loginState,
             onLogin = { email, password -> loginViewModel.login(email, password) },
             onDemoMode = { loginViewModel.enterDemoMode() }
         )
     } else {
-        // Show main app with navigation
-        val navController = rememberNavController()
-        val navBackStackEntry by navController.currentBackStackEntryAsState()
-        val currentRoute = navBackStackEntry?.destination?.route
+        MainContent(isDemoMode = loginState.isDemoMode)
+    }
+}
 
-        val screenTitle = when (currentRoute) {
-            Screen.Scan.route -> "RepoScan Pro"
-            Screen.Alerts.route -> "Alerts"
-            Screen.Map.route -> "Map"
-            Screen.Search.route -> "Search"
-            Screen.History.route -> "History"
-            Screen.HotList.route -> "Hot List"
-            Screen.Settings.route -> "Settings"
-            else -> "RepoScan Pro"
-        }
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MainContent(isDemoMode: Boolean) {
+    val navController: NavHostController = rememberNavController()
+    val navBackStackEntry by navController.currentBackStackEntryAsState()
+    val currentRoute by remember {
+        derivedStateOf { navBackStackEntry?.destination?.route }
+    }
 
-        Scaffold(
-            modifier = Modifier.fillMaxSize(),
-            topBar = {
-                TopAppBar(
-                    title = {
-                        Text(
-                            text = screenTitle,
-                            style = MaterialTheme.typography.titleLarge
-                        )
-                    },
-                    actions = {
-                        if (currentRoute != Screen.History.route) {
-                            IconButton(onClick = {
-                                navController.navigate(Screen.History.route) {
-                                    launchSingleTop = true
-                                }
-                            }) {
-                                Icon(Icons.Filled.History, contentDescription = "History")
-                            }
-                        }
-                        if (currentRoute != Screen.Settings.route) {
-                            IconButton(onClick = {
-                                navController.navigate(Screen.Settings.route) {
-                                    launchSingleTop = true
-                                }
-                            }) {
-                                Icon(Icons.Filled.Settings, contentDescription = "Settings")
-                            }
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.surface,
-                        titleContentColor = MaterialTheme.colorScheme.onSurface,
-                        actionIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                )
-            },
-            bottomBar = {
-                BottomNavBar(navController = navController)
+    val screenTitle by remember(currentRoute) {
+        derivedStateOf {
+            when (currentRoute) {
+                Screen.Scan.route -> "RepoScan Pro"
+                Screen.Alerts.route -> "Alerts"
+                Screen.Map.route -> "Map"
+                Screen.Search.route -> "Search"
+                Screen.History.route -> "History"
+                Screen.HotList.route -> "Hot List"
+                Screen.Settings.route -> "Settings"
+                else -> "RepoScan Pro"
             }
-        ) { innerPadding ->
-            NavGraph(
-                navController = navController,
-                isDemoMode = loginState.isDemoMode,
-                modifier = Modifier.padding(innerPadding)
-            )
         }
+    }
+
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        topBar = {
+            TopAppBar(
+                title = {
+                    Text(
+                        text = screenTitle,
+                        style = MaterialTheme.typography.titleLarge
+                    )
+                },
+                actions = {
+                    if (currentRoute != Screen.History.route) {
+                        IconButton(onClick = {
+                            navController.navigate(Screen.History.route) {
+                                launchSingleTop = true
+                            }
+                        }) {
+                            Icon(Icons.Filled.History, contentDescription = "History")
+                        }
+                    }
+                    if (currentRoute != Screen.Settings.route) {
+                        IconButton(onClick = {
+                            navController.navigate(Screen.Settings.route) {
+                                launchSingleTop = true
+                            }
+                        }) {
+                            Icon(Icons.Filled.Settings, contentDescription = "Settings")
+                        }
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface,
+                    actionIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            )
+        },
+        bottomBar = {
+            BottomNavBar(navController = navController)
+        }
+    ) { innerPadding ->
+        NavGraph(
+            navController = navController,
+            isDemoMode = isDemoMode,
+            modifier = Modifier.padding(innerPadding)
+        )
     }
 }

@@ -32,9 +32,11 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.reposcan.pro.ui.theme.Blue500
 import com.reposcan.pro.ui.theme.Red400
+import com.reposcan.pro.ui.theme.RepoScanProTheme
 
 @Composable
 fun LoginScreen(
@@ -54,7 +56,6 @@ fun LoginScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        // Title
         Text(
             text = "RepoScan Pro",
             style = MaterialTheme.typography.headlineLarge,
@@ -69,7 +70,6 @@ fun LoginScreen(
 
         Spacer(modifier = Modifier.height(48.dp))
 
-        // Email
         OutlinedTextField(
             value = email,
             onValueChange = { email = it },
@@ -87,7 +87,6 @@ fun LoginScreen(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Password
         OutlinedTextField(
             value = password,
             onValueChange = { password = it },
@@ -109,7 +108,6 @@ fun LoginScreen(
             modifier = Modifier.fillMaxWidth()
         )
 
-        // Error
         state.error?.let { error ->
             Spacer(modifier = Modifier.height(8.dp))
             Text(
@@ -122,7 +120,6 @@ fun LoginScreen(
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // Sign In button
         Button(
             onClick = { onLogin(email, password) },
             enabled = !state.isLoading && email.isNotBlank() && password.isNotBlank(),
@@ -146,7 +143,6 @@ fun LoginScreen(
         HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
         Spacer(modifier = Modifier.height(24.dp))
 
-        // Demo Mode button
         OutlinedButton(
             onClick = onDemoMode,
             enabled = !state.isLoading,
@@ -163,6 +159,18 @@ fun LoginScreen(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(top = 8.dp)
+        )
+    }
+}
+
+@Preview(showBackground = true, backgroundColor = 0xFF0F172A)
+@Composable
+private fun LoginScreenPreview() {
+    RepoScanProTheme(darkTheme = true) {
+        LoginScreen(
+            state = LoginState(),
+            onLogin = { _, _ -> },
+            onDemoMode = {}
         )
     }
 }

@@ -1,16 +1,20 @@
 package com.reposcan.pro.ui.screens.search
 
+import androidx.compose.runtime.Immutable
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.reposcan.pro.data.model.Detection
-import com.reposcan.pro.data.repository.DetectionRepository
+import com.reposcan.pro.domain.usecase.SearchPlateUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+@Immutable
 data class SearchState(
     val query: String = "",
     val results: List<Detection> = emptyList(),
@@ -21,42 +25,41 @@ data class SearchState(
 
 @HiltViewModel
 class SearchViewModel @Inject constructor(
-    private val detectionRepository: DetectionRepository
+    private val searchPlateUseCase: SearchPlateUseCase,
+    private val savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
-    private val _state = MutableStateFlow(SearchState())
+    private val _state = MutableStateFlow(
+        SearchState(
+            query = savedStateHandle.get<String>("search_query") ?: ""
+        )
+    )
     val state: StateFlow<SearchState> = _state.asStateFlow()
 
     fun updateQuery(query: String) {
-        _state.value = _state.value.copy(query = query)
+        savedStateHandle["search_query"] = query
+        _state.update { it.copy(query = query) }
     }
 
     fun search(isDemoMode: Boolean) {
         val query = _state.value.query.trim().uppercase()
-        if (query.isBlank()) return
+        if (query.isBlank() || _state.value.isLoading) return
 
         viewModelScope.launch {
-            _state.value = _state.value.copy(isLoading = true, hasSearched = true, error = null)
-            if (isDemoMode) {
-                val all = detectionRepository.getDemoDetections().items
-                val filtered = all.filter { det ->
-                    det.plateReads.any { it.plateText.contains(query) }
+            _state.update { it.copy(isLoading = true, hasSearched = true, error = null) }
+            searchPlateUseCase(query, isDemoMode).fold(
+                onSuccess = { results ->
+                    _state.update { it.copy(isLoading = false, results = results) }
+                },
+                onFailure = { e ->
+                    _state.update { it.copy(isLoading = false, error = e.message) }
                 }
-                _state.value = _state.value.copy(isLoading = false, results = filtered)
-            } else {
-                detectionRepository.searchPlate(query).fold(
-                    onSuccess = { list ->
-                        _state.value = _state.value.copy(isLoading = false, results = list.items)
-                    },
-                    onFailure = { e ->
-                        _state.value = _state.value.copy(isLoading = false, error = e.message)
-                    }
-                )
-            }
+            )
         }
     }
 
     fun clearSearch() {
-        _state.value = SearchState()
+        savedStateHandle["search_query"] = ""
+        _state.update { SearchState() }
     }
 }

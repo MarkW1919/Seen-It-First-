@@ -6,6 +6,7 @@ import com.reposcan.pro.data.model.Detection
 import com.reposcan.pro.data.model.DetectionList
 import com.reposcan.pro.data.model.PlateRead
 import com.reposcan.pro.data.remote.ApiService
+import com.reposcan.pro.domain.repository.IDetectionRepository
 import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -14,17 +15,17 @@ import javax.inject.Singleton
 class DetectionRepository @Inject constructor(
     private val apiService: ApiService,
     private val detectionDao: DetectionDao
-) {
+) : IDetectionRepository {
 
-    fun getCachedDetections(limit: Int = 100): Flow<List<DetectionEntity>> {
+    override fun getCachedDetections(limit: Int): Flow<List<DetectionEntity>> {
         return detectionDao.getRecentDetections(limit)
     }
 
-    fun searchCachedPlates(query: String): Flow<List<DetectionEntity>> {
+    override fun searchCachedPlates(query: String): Flow<List<DetectionEntity>> {
         return detectionDao.searchByPlate(query)
     }
 
-    suspend fun fetchDetections(page: Int = 1, pageSize: Int = 20): Result<DetectionList> {
+    override suspend fun fetchDetections(page: Int, pageSize: Int): Result<DetectionList> {
         return try {
             val response = apiService.getDetections(page, pageSize)
             if (response.isSuccessful) {
@@ -39,7 +40,7 @@ class DetectionRepository @Inject constructor(
         }
     }
 
-    suspend fun searchPlate(query: String, exact: Boolean = false): Result<DetectionList> {
+    override suspend fun searchPlate(query: String, exact: Boolean): Result<DetectionList> {
         return try {
             val response = apiService.searchPlate(query, exact)
             if (response.isSuccessful) {
@@ -75,7 +76,7 @@ class DetectionRepository @Inject constructor(
         detectionDao.insertAll(entities)
     }
 
-    fun getDemoDetections(): DetectionList {
+    override fun getDemoDetections(): DetectionList {
         val detections = listOf(
             Detection(
                 id = "det-001", agentId = "demo-user-001", sessionId = null,

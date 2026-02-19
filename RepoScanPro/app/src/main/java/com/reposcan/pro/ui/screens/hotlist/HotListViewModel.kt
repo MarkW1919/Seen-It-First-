@@ -1,16 +1,21 @@
 package com.reposcan.pro.ui.screens.hotlist
 
+import androidx.compose.runtime.Immutable
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.reposcan.pro.data.model.HotListEntry
-import com.reposcan.pro.data.repository.HotListRepository
+import com.reposcan.pro.domain.usecase.GetHotListEntriesUseCase
+import com.reposcan.pro.domain.usecase.ManageHotListUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+@Immutable
 data class HotListState(
     val entries: List<HotListEntry> = emptyList(),
     val isLoading: Boolean = false,
@@ -20,7 +25,9 @@ data class HotListState(
 
 @HiltViewModel
 class HotListViewModel @Inject constructor(
-    private val hotListRepository: HotListRepository
+    private val getHotListEntriesUseCase: GetHotListEntriesUseCase,
+    private val manageHotListUseCase: ManageHotListUseCase,
+    private val savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(HotListState())
@@ -28,69 +35,44 @@ class HotListViewModel @Inject constructor(
 
     fun loadEntries(isDemoMode: Boolean) {
         viewModelScope.launch {
-            _state.value = _state.value.copy(isLoading = true, error = null)
-            if (isDemoMode) {
-                _state.value = HotListState(entries = hotListRepository.getDemoEntries())
-            } else {
-                hotListRepository.getEntries().fold(
-                    onSuccess = { entries ->
-                        _state.value = HotListState(entries = entries)
-                    },
-                    onFailure = { e ->
-                        _state.value = HotListState(error = e.message)
-                    }
-                )
-            }
+            _state.update { it.copy(isLoading = true, error = null) }
+            getHotListEntriesUseCase(isDemoMode).fold(
+                onSuccess = { entries ->
+                    _state.update { HotListState(entries = entries) }
+                },
+                onFailure = { e ->
+                    _state.update { HotListState(error = e.message ?: "Failed to load entries") }
+                }
+            )
         }
     }
 
     fun deleteEntry(id: String, isDemoMode: Boolean) {
+        _state.update { current ->
+            current.copy(entries = current.entries.filter { it.id != id })
+        }
         viewModelScope.launch {
-            _state.value = _state.value.copy(
-                entries = _state.value.entries.filter { it.id != id }
-            )
-            if (!isDemoMode) {
-                hotListRepository.deleteEntry(id)
-            }
+            manageHotListUseCase.deleteEntry(id, isDemoMode)
         }
     }
 
     fun addEntry(plateText: String, vehicleInfo: String, isDemoMode: Boolean) {
         viewModelScope.launch {
-            val newEntry = HotListEntry(
-                id = "hl-${System.currentTimeMillis()}",
-                plateText = plateText.uppercase(),
-                plateState = null,
-                caseNumber = null,
-                lenderName = null,
-                orderType = "repossession",
-                vehicleYear = null,
-                vehicleMake = vehicleInfo.ifBlank { null },
-                vehicleModel = null,
-                vehicleColor = null,
-                vin = null,
-                debtorName = null,
-                debtorAddress = null,
-                isActive = true,
-                priority = "normal",
-                notes = null,
-                createdAt = java.time.Instant.now().toString(),
-                updatedAt = java.time.Instant.now().toString(),
-                expiresAt = null
+            manageHotListUseCase.addEntry(plateText, vehicleInfo, isDemoMode).fold(
+                onSuccess = { newEntry ->
+                    _state.update { current ->
+                        current.copy(
+                            entries = listOf(newEntry) + current.entries,
+                            showAddDialog = false
+                        )
+                    }
+                },
+                onFailure = { }
             )
-            _state.value = _state.value.copy(
-                entries = listOf(newEntry) + _state.value.entries,
-                showAddDialog = false
-            )
-            if (!isDemoMode) {
-                hotListRepository.createEntry(
-                    mapOf("plate_text" to plateText.uppercase(), "vehicle_make" to vehicleInfo)
-                )
-            }
         }
     }
 
     fun toggleAddDialog() {
-        _state.value = _state.value.copy(showAddDialog = !_state.value.showAddDialog)
+        _state.update { it.copy(showAddDialog = !it.showAddDialog) }
     }
 }

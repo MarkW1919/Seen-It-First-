@@ -3,15 +3,16 @@ package com.reposcan.pro.data.repository
 import com.reposcan.pro.data.model.HotListAlert
 import com.reposcan.pro.data.model.HotListEntry
 import com.reposcan.pro.data.remote.ApiService
+import com.reposcan.pro.domain.repository.IHotListRepository
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
 class HotListRepository @Inject constructor(
     private val apiService: ApiService
-) {
+) : IHotListRepository {
 
-    suspend fun getEntries(activeOnly: Boolean = true): Result<List<HotListEntry>> {
+    override suspend fun getEntries(activeOnly: Boolean): Result<List<HotListEntry>> {
         return try {
             val response = apiService.getHotListEntries(activeOnly)
             if (response.isSuccessful) {
@@ -24,7 +25,7 @@ class HotListRepository @Inject constructor(
         }
     }
 
-    suspend fun createEntry(data: Map<String, Any?>): Result<HotListEntry> {
+    override suspend fun createEntry(data: Map<String, Any?>): Result<HotListEntry> {
         return try {
             val response = apiService.createHotListEntry(data)
             if (response.isSuccessful) {
@@ -37,7 +38,7 @@ class HotListRepository @Inject constructor(
         }
     }
 
-    suspend fun deleteEntry(id: String): Result<Unit> {
+    override suspend fun deleteEntry(id: String): Result<Unit> {
         return try {
             val response = apiService.deleteHotListEntry(id)
             if (response.isSuccessful) {
@@ -50,7 +51,7 @@ class HotListRepository @Inject constructor(
         }
     }
 
-    suspend fun getAlerts(status: String? = null): Result<List<HotListAlert>> {
+    override suspend fun getAlerts(status: String?): Result<List<HotListAlert>> {
         return try {
             val response = apiService.getAlerts(status)
             if (response.isSuccessful) {
@@ -63,7 +64,7 @@ class HotListRepository @Inject constructor(
         }
     }
 
-    suspend fun acknowledgeAlert(id: String): Result<HotListAlert> {
+    override suspend fun acknowledgeAlert(id: String): Result<HotListAlert> {
         return try {
             val response = apiService.updateAlert(id, mapOf("status" to "acknowledged"))
             if (response.isSuccessful) {
@@ -76,7 +77,7 @@ class HotListRepository @Inject constructor(
         }
     }
 
-    fun getDemoEntries(): List<HotListEntry> {
+    override fun getDemoEntries(): List<HotListEntry> {
         return listOf(
             HotListEntry(
                 id = "hl-001", plateText = "ABC1234", plateState = "CA",
@@ -101,7 +102,7 @@ class HotListRepository @Inject constructor(
         )
     }
 
-    fun getDemoAlerts(): List<HotListAlert> {
+    override fun getDemoAlerts(): List<HotListAlert> {
         return listOf(
             HotListAlert(
                 id = "alert-001", hotlistEntryId = "hl-001", detectionId = "det-001",

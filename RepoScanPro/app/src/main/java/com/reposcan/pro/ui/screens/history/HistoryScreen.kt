@@ -10,15 +10,18 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.reposcan.pro.ui.components.DetectionCard
+import com.reposcan.pro.ui.theme.RepoScanProTheme
 
 @Composable
 fun HistoryScreen(
@@ -31,8 +34,20 @@ fun HistoryScreen(
         viewModel.loadHistory(isDemoMode)
     }
 
+    HistoryContent(
+        state = state,
+        onRetry = { viewModel.loadHistory(isDemoMode) }
+    )
+}
+
+@Composable
+fun HistoryContent(
+    state: HistoryState,
+    onRetry: () -> Unit,
+    modifier: Modifier = Modifier
+) {
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxSize()
             .padding(top = 8.dp)
     ) {
@@ -64,6 +79,9 @@ fun HistoryScreen(
                         text = state.error ?: "Unknown error",
                         color = MaterialTheme.colorScheme.error
                     )
+                    TextButton(onClick = onRetry) {
+                        Text("Retry")
+                    }
                 }
             }
             state.detections.isEmpty() -> {
@@ -97,5 +115,16 @@ fun HistoryScreen(
                 }
             }
         }
+    }
+}
+
+@Preview(showBackground = true, backgroundColor = 0xFF0F172A)
+@Composable
+private fun HistoryContentPreview() {
+    RepoScanProTheme(darkTheme = true) {
+        HistoryContent(
+            state = HistoryState(),
+            onRetry = {}
+        )
     }
 }

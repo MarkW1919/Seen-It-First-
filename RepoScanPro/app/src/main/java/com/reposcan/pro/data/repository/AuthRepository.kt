@@ -4,6 +4,7 @@ import com.reposcan.pro.data.model.LoginRequest
 import com.reposcan.pro.data.model.TokenResponse
 import com.reposcan.pro.data.model.User
 import com.reposcan.pro.data.remote.ApiService
+import com.reposcan.pro.domain.repository.IAuthRepository
 import com.reposcan.pro.util.PreferencesManager
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -12,9 +13,9 @@ import javax.inject.Singleton
 class AuthRepository @Inject constructor(
     private val apiService: ApiService,
     private val preferencesManager: PreferencesManager
-) {
+) : IAuthRepository {
 
-    suspend fun login(email: String, password: String): Result<TokenResponse> {
+    override suspend fun login(email: String, password: String): Result<TokenResponse> {
         return try {
             val response = apiService.login(LoginRequest(email, password))
             if (response.isSuccessful) {
@@ -29,7 +30,7 @@ class AuthRepository @Inject constructor(
         }
     }
 
-    suspend fun getMe(): Result<User> {
+    override suspend fun getMe(): Result<User> {
         return try {
             val response = apiService.getMe()
             if (response.isSuccessful) {
@@ -42,11 +43,11 @@ class AuthRepository @Inject constructor(
         }
     }
 
-    suspend fun logout() {
+    override suspend fun logout() {
         preferencesManager.clearTokens()
     }
 
-    fun getDemoUser(): User {
+    override fun getDemoUser(): User {
         return User(
             id = "demo-user-001",
             email = "demo@reposcan.pro",
@@ -57,7 +58,7 @@ class AuthRepository @Inject constructor(
         )
     }
 
-    fun getDemoToken(): TokenResponse {
+    override fun getDemoToken(): TokenResponse {
         return TokenResponse(
             accessToken = "demo-access-token",
             refreshToken = "demo-refresh-token",

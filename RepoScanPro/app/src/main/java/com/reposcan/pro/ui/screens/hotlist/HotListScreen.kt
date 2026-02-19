@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -35,12 +36,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.reposcan.pro.data.model.HotListEntry
 import com.reposcan.pro.ui.components.PlateDisplay
 import com.reposcan.pro.ui.theme.Blue500
 import com.reposcan.pro.ui.theme.Green400
 import com.reposcan.pro.ui.theme.Red400
+import com.reposcan.pro.ui.theme.RepoScanProTheme
 import com.reposcan.pro.ui.theme.Yellow400
 
 @Composable
@@ -54,10 +58,29 @@ fun HotListScreen(
         viewModel.loadEntries(isDemoMode)
     }
 
+    HotListContent(
+        state = state,
+        onToggleAddDialog = { viewModel.toggleAddDialog() },
+        onDeleteEntry = { viewModel.deleteEntry(it, isDemoMode) },
+        onAddEntry = { plate, vehicle -> viewModel.addEntry(plate, vehicle, isDemoMode) },
+        onRetry = { viewModel.loadEntries(isDemoMode) }
+    )
+}
+
+@Composable
+fun HotListContent(
+    state: HotListState,
+    onToggleAddDialog: () -> Unit,
+    onDeleteEntry: (String) -> Unit,
+    onAddEntry: (String, String) -> Unit,
+    onRetry: () -> Unit,
+    modifier: Modifier = Modifier
+) {
     Scaffold(
+        modifier = modifier,
         floatingActionButton = {
             FloatingActionButton(
-                onClick = { viewModel.toggleAddDialog() },
+                onClick = onToggleAddDialog,
                 containerColor = Blue500
             ) {
                 Icon(Icons.Filled.Add, contentDescription = "Add Entry")
@@ -82,147 +105,207 @@ fun HotListScreen(
                 modifier = Modifier.padding(horizontal = 16.dp)
             )
 
-            if (state.entries.isEmpty()) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(32.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
-                ) {
-                    Text(
-                        text = "No hot list entries",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+            when {
+                state.isLoading && state.entries.isEmpty() -> {
+                    Column(
+                        modifier = Modifier.fillMaxSize(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        CircularProgressIndicator()
+                    }
                 }
-            } else {
-                LazyColumn(
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(state.entries, key = { it.id }) { entry ->
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.surfaceVariant
-                            )
-                        ) {
-                            Column(modifier = Modifier.padding(12.dp)) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    PlateDisplay(plateText = entry.plateText, confidence = 1.0)
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                    ) {
-                                        Text(
-                                            text = entry.priority.uppercase(),
-                                            style = MaterialTheme.typography.labelSmall,
-                                            fontWeight = FontWeight.Bold,
-                                            color = when (entry.priority) {
-                                                "critical" -> Red400
-                                                "high" -> Yellow400
-                                                else -> Green400
-                                            }
-                                        )
-                                        IconButton(onClick = {
-                                            viewModel.deleteEntry(entry.id, isDemoMode)
-                                        }) {
-                                            Icon(
-                                                Icons.Filled.Delete, "Delete",
-                                                tint = Red400
-                                            )
-                                        }
-                                    }
-                                }
-
-                                Spacer(modifier = Modifier.height(4.dp))
-
-                                val vehicleDesc = buildString {
-                                    entry.vehicleYear?.let { append("$it ") }
-                                    entry.vehicleMake?.let { append("$it ") }
-                                    entry.vehicleModel?.let { append("$it ") }
-                                    entry.vehicleColor?.let { append("($it)") }
-                                }
-                                if (vehicleDesc.isNotBlank()) {
-                                    Text(
-                                        text = vehicleDesc.trim(),
-                                        style = MaterialTheme.typography.bodyMedium
-                                    )
-                                }
-
-                                entry.caseNumber?.let {
-                                    Text(
-                                        text = "Case: $it",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                                entry.lenderName?.let {
-                                    Text(
-                                        text = "Lender: $it",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                                entry.debtorName?.let {
-                                    Text(
-                                        text = "Debtor: $it",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
+                state.error != null && state.entries.isEmpty() -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(32.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Text(
+                            text = state.error ?: "Unknown error",
+                            color = MaterialTheme.colorScheme.error
+                        )
+                        TextButton(onClick = onRetry) {
+                            Text("Retry")
                         }
                     }
-                    item { Spacer(modifier = Modifier.height(80.dp)) }
+                }
+                state.entries.isEmpty() -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(32.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Text(
+                            text = "No hot list entries",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                else -> {
+                    LazyColumn(
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(state.entries, key = { it.id }) { entry ->
+                            HotListEntryCard(
+                                entry = entry,
+                                onDelete = { onDeleteEntry(entry.id) }
+                            )
+                        }
+                        item { Spacer(modifier = Modifier.height(80.dp)) }
+                    }
                 }
             }
         }
     }
 
-    // Add dialog
     if (state.showAddDialog) {
-        var plateText by rememberSaveable { mutableStateOf("") }
-        var vehicleInfo by rememberSaveable { mutableStateOf("") }
+        AddEntryDialog(
+            onDismiss = onToggleAddDialog,
+            onConfirm = onAddEntry
+        )
+    }
+}
 
-        AlertDialog(
-            onDismissRequest = { viewModel.toggleAddDialog() },
-            title = { Text("Add Hot List Entry") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = plateText,
-                        onValueChange = { plateText = it.uppercase() },
-                        label = { Text("Plate Number") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = vehicleInfo,
-                        onValueChange = { vehicleInfo = it },
-                        label = { Text("Vehicle Make (optional)") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = { viewModel.addEntry(plateText, vehicleInfo, isDemoMode) },
-                    enabled = plateText.isNotBlank()
+@Composable
+private fun HotListEntryCard(
+    entry: HotListEntry,
+    onDelete: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                PlateDisplay(plateText = entry.plateText, confidence = 1.0)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    Text("Add")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { viewModel.toggleAddDialog() }) {
-                    Text("Cancel")
+                    Text(
+                        text = entry.priority.uppercase(),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = when (entry.priority) {
+                            "critical" -> Red400
+                            "high" -> Yellow400
+                            else -> Green400
+                        }
+                    )
+                    IconButton(onClick = onDelete) {
+                        Icon(Icons.Filled.Delete, "Delete", tint = Red400)
+                    }
                 }
             }
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            val vehicleDesc = buildString {
+                entry.vehicleYear?.let { append("$it ") }
+                entry.vehicleMake?.let { append("$it ") }
+                entry.vehicleModel?.let { append("$it ") }
+                entry.vehicleColor?.let { append("($it)") }
+            }
+            if (vehicleDesc.isNotBlank()) {
+                Text(
+                    text = vehicleDesc.trim(),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+
+            entry.caseNumber?.let {
+                Text(
+                    text = "Case: $it",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            entry.lenderName?.let {
+                Text(
+                    text = "Lender: $it",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            entry.debtorName?.let {
+                Text(
+                    text = "Debtor: $it",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AddEntryDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (String, String) -> Unit
+) {
+    var plateText by rememberSaveable { mutableStateOf("") }
+    var vehicleInfo by rememberSaveable { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Add Hot List Entry") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = plateText,
+                    onValueChange = { plateText = it.uppercase() },
+                    label = { Text("Plate Number") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = vehicleInfo,
+                    onValueChange = { vehicleInfo = it },
+                    label = { Text("Vehicle Make (optional)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(plateText, vehicleInfo) },
+                enabled = plateText.isNotBlank()
+            ) {
+                Text("Add")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+@Preview(showBackground = true, backgroundColor = 0xFF0F172A)
+@Composable
+private fun HotListContentPreview() {
+    RepoScanProTheme(darkTheme = true) {
+        HotListContent(
+            state = HotListState(),
+            onToggleAddDialog = {},
+            onDeleteEntry = {},
+            onAddEntry = { _, _ -> },
+            onRetry = {}
         )
     }
 }

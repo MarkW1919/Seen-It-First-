@@ -27,12 +27,16 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.reposcan.pro.data.model.CameraStatus
+import com.reposcan.pro.data.model.Detection
 import com.reposcan.pro.ui.components.DetectionCard
 import com.reposcan.pro.ui.components.StatusBar
 import com.reposcan.pro.ui.theme.Green400
 import com.reposcan.pro.ui.theme.Red400
+import com.reposcan.pro.ui.theme.RepoScanProTheme
 
 @Composable
 fun LiveScanScreen(
@@ -47,10 +51,25 @@ fun LiveScanScreen(
         }
     }
 
+    LiveScanContent(
+        state = state,
+        onToggleScanning = { viewModel.toggleScanning() },
+        onClearFeed = { viewModel.clearFeed() }
+    )
+}
+
+@Composable
+fun LiveScanContent(
+    state: ScanState,
+    onToggleScanning: () -> Unit,
+    onClearFeed: () -> Unit,
+    modifier: Modifier = Modifier
+) {
     Scaffold(
+        modifier = modifier,
         floatingActionButton = {
             FloatingActionButton(
-                onClick = { viewModel.toggleScanning() },
+                onClick = onToggleScanning,
                 containerColor = if (state.isScanning) Red400 else Green400
             ) {
                 Icon(
@@ -71,7 +90,6 @@ fun LiveScanScreen(
                 hasGps = state.hasGps
             )
 
-            // Stats row
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -91,7 +109,7 @@ fun LiveScanScreen(
                     )
                 }
                 if (state.liveFeed.isNotEmpty()) {
-                    IconButton(onClick = { viewModel.clearFeed() }) {
+                    IconButton(onClick = onClearFeed) {
                         Icon(
                             Icons.Filled.Delete,
                             contentDescription = "Clear feed",
@@ -129,5 +147,17 @@ fun LiveScanScreen(
                 }
             }
         }
+    }
+}
+
+@Preview(showBackground = true, backgroundColor = 0xFF0F172A)
+@Composable
+private fun LiveScanContentPreview() {
+    RepoScanProTheme(darkTheme = true) {
+        LiveScanContent(
+            state = ScanState(),
+            onToggleScanning = {},
+            onClearFeed = {}
+        )
     }
 }

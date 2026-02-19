@@ -22,9 +22,11 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.reposcan.pro.ui.theme.Red400
+import com.reposcan.pro.ui.theme.RepoScanProTheme
 
 @Composable
 fun SettingsScreen(
@@ -33,8 +35,28 @@ fun SettingsScreen(
 ) {
     val state by viewModel.state.collectAsState()
 
+    SettingsContent(
+        state = state,
+        onDarkModeChange = { viewModel.setDarkMode(it) },
+        onAlertSoundChange = { viewModel.setAlertSound(it) },
+        onAlertVibrationChange = { viewModel.setAlertVibration(it) },
+        onBaseUrlChange = { viewModel.setBaseUrl(it) },
+        onLogout = { viewModel.logout(onLogout) }
+    )
+}
+
+@Composable
+fun SettingsContent(
+    state: SettingsState,
+    onDarkModeChange: (Boolean) -> Unit,
+    onAlertSoundChange: (Boolean) -> Unit,
+    onAlertVibrationChange: (Boolean) -> Unit,
+    onBaseUrlChange: (String) -> Unit,
+    onLogout: () -> Unit,
+    modifier: Modifier = Modifier
+) {
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(16.dp)
@@ -45,7 +67,6 @@ fun SettingsScreen(
             modifier = Modifier.padding(bottom = 16.dp)
         )
 
-        // Appearance
         Text(
             text = "APPEARANCE",
             style = MaterialTheme.typography.labelLarge,
@@ -55,12 +76,11 @@ fun SettingsScreen(
         SettingsSwitch(
             label = "Dark Mode",
             checked = state.darkMode,
-            onCheckedChange = { viewModel.setDarkMode(it) }
+            onCheckedChange = onDarkModeChange
         )
 
         HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
 
-        // Alerts
         Text(
             text = "ALERTS",
             style = MaterialTheme.typography.labelLarge,
@@ -70,17 +90,16 @@ fun SettingsScreen(
         SettingsSwitch(
             label = "Alert Sound",
             checked = state.alertSoundEnabled,
-            onCheckedChange = { viewModel.setAlertSound(it) }
+            onCheckedChange = onAlertSoundChange
         )
         SettingsSwitch(
             label = "Alert Vibration",
             checked = state.alertVibrationEnabled,
-            onCheckedChange = { viewModel.setAlertVibration(it) }
+            onCheckedChange = onAlertVibrationChange
         )
 
         HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
 
-        // Connection
         Text(
             text = "CONNECTION",
             style = MaterialTheme.typography.labelLarge,
@@ -89,7 +108,7 @@ fun SettingsScreen(
         Spacer(modifier = Modifier.height(8.dp))
         OutlinedTextField(
             value = state.baseUrl,
-            onValueChange = { viewModel.setBaseUrl(it) },
+            onValueChange = onBaseUrlChange,
             label = { Text("Backend URL") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth()
@@ -97,7 +116,6 @@ fun SettingsScreen(
 
         HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
 
-        // About
         Text(
             text = "ABOUT",
             style = MaterialTheme.typography.labelLarge,
@@ -116,9 +134,8 @@ fun SettingsScreen(
 
         Spacer(modifier = Modifier.height(32.dp))
 
-        // Logout
         Button(
-            onClick = { viewModel.logout(onLogout) },
+            onClick = onLogout,
             colors = ButtonDefaults.buttonColors(containerColor = Red400),
             modifier = Modifier.fillMaxWidth()
         ) {
@@ -144,5 +161,20 @@ private fun SettingsSwitch(
     ) {
         Text(text = label, style = MaterialTheme.typography.bodyLarge)
         Switch(checked = checked, onCheckedChange = onCheckedChange)
+    }
+}
+
+@Preview(showBackground = true, backgroundColor = 0xFF0F172A)
+@Composable
+private fun SettingsContentPreview() {
+    RepoScanProTheme(darkTheme = true) {
+        SettingsContent(
+            state = SettingsState(isLoading = false),
+            onDarkModeChange = {},
+            onAlertSoundChange = {},
+            onAlertVibrationChange = {},
+            onBaseUrlChange = {},
+            onLogout = {}
+        )
     }
 }
