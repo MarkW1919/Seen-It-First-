@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 
 from geoalchemy2 import Geometry
-from sqlalchemy import String, Float, Integer, DateTime, ForeignKey, func
+from sqlalchemy import Index, String, Float, Integer, DateTime, ForeignKey, func
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -11,18 +11,22 @@ from app.database import Base
 
 class ScanSession(Base):
     __tablename__ = "scan_sessions"
+    __table_args__ = (
+        # Composite index for querying sessions by agent and status
+        Index("ix_scan_sessions_agent_status", "agent_id", "status"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     agent_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id")
+        UUID(as_uuid=True), ForeignKey("users.id"), index=True
     )
 
     # Session info
     name: Mapped[str] = mapped_column(String(255), nullable=True)
     status: Mapped[str] = mapped_column(
-        String(30), default="active"
+        String(30), default="active", index=True
     )  # active, paused, completed
 
     # Route tracking (LineString of GPS points)

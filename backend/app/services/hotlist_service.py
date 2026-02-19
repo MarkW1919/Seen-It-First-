@@ -190,12 +190,9 @@ async def update_entry(
 
 
 async def get_entry(db: AsyncSession, entry_id: uuid.UUID) -> HotListEntry | None:
-    result = await db.execute(
-        select(HotListEntry)
-        .options(selectinload(HotListEntry.alerts))
-        .where(HotListEntry.id == entry_id)
-    )
-    return result.scalar_one_or_none()
+    # No eager load of alerts — the response schema doesn't include them,
+    # and an entry with thousands of historical alerts would be expensive.
+    return await db.get(HotListEntry, entry_id)
 
 
 async def list_entries(
