@@ -2,6 +2,8 @@
 
 device: "cuda"  # cuda, cpu
 precision: "fp16"  # fp32, fp16, int8
+workspace_gb: 1  # TensorRT builder workspace
+dla_core: -1  # -1 = disabled, 0 or 1 = DLA core index
 
 # Vehicle Detection (YOLOv8n)
 vehicle_detector:
@@ -21,6 +23,11 @@ plate_detector:
   confidence_threshold: 0.6
   nms_threshold: 0.4
   batch_size: 1
+  perspective_correction: true
+  blur_mitigation: true
+  night_enhance: true
+  min_plate_width: 40
+  min_plate_height: 12
 
 # Plate OCR (CRNN)
 plate_ocr:
@@ -28,17 +35,33 @@ plate_ocr:
   onnx_path: "models/crnn_plate_ocr.onnx"
   input_size: [200, 48]  # Width x Height
   confidence_threshold: 0.7
+  char_confidence_min: 0.4  # Min per-character confidence
   charset: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
   max_plate_length: 8
-  # State-specific plate formats for validation
+  min_plate_length: 2
   validate_format: true
+  confusion_correction: true  # O/0, I/1, S/5, B/8 correction
+  duplicate_ttl: 3.0  # Seconds to suppress duplicate plates
+  duplicate_cache_size: 256
+  partial_merge_ttl: 2.0  # Seconds to merge partial reads
+  partial_merge_iou: 0.5  # IoU threshold for bbox matching
 
 # Vehicle Classifier (EfficientNet-B0)
 vehicle_classifier:
   model_path: "models/efficientnet_ymm.engine"
   onnx_path: "models/efficientnet_ymm.onnx"
   input_size: [224, 224]
-  confidence_threshold: 0.5
+  confidence_threshold: 0.5  # Global fallback threshold
+  make_confidence_threshold: 0.5
+  model_confidence_threshold: 0.5
+  year_confidence_threshold: 0.5
+  color_confidence_threshold: 0.3  # Colors are easier to classify
+  make_labels_path: "models/labels/makes.json"
+  model_labels_path: "models/labels/models.json"
+  year_labels_path: "models/labels/years.json"
+  color_labels_path: "models/labels/colors.json"
+  cache_ttl: 10.0  # Seconds to cache per-track classification
+  cache_size: 128  # Max cached track classifications
 
 # Multi-Object Tracker (DeepSORT)
 tracker:
@@ -47,6 +70,7 @@ tracker:
   iou_threshold: 0.3
   max_cosine_distance: 0.4
   nn_budget: 100
+  max_track_detections: 10  # Bounded history per track
   embedding_model_path: "models/deepsort_reid.engine"
 
 # Pipeline

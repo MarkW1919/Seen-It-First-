@@ -2,6 +2,12 @@
 
 Orchestrates vehicle detection, plate detection, OCR, classification,
 and multi-object tracking into a single end-to-end pipeline.
+
+Optimized for sustained 25-30 FPS on Jetson Orin Nano Super:
+- Non-blocking async API dispatch (fire-and-forget)
+- Frame-budget-aware processing with skip logic
+- Thermal monitoring with automatic throttling
+- Bounded detection history to prevent memory growth
 """
 import asyncio
 import json
@@ -26,18 +32,70 @@ from ai.tracker import MultiObjectTracker
 logger = logging.getLogger(__name__)
 
 
+class ThermalMonitor:
+    """Monitor Jetson GPU/CPU temperature and throttle if needed."""
+
+    THROTTLE_TEMP = 80.0
+    RESUME_TEMP = 70.0
+    THERMAL_ZONE = "/sys/devices/virtual/thermal/thermal_zone0/temp"
+
+    def __init__(self):
+        self._throttled = False
+        self._last_check = 0.0
+        self._check_interval = 2.0
+
+    @property
+    def is_throttled(self) -> bool:
+        now = time.monotonic()
+        if now - self._last_check < self._check_interval:
+            return self._throttled
+        self._last_check = now
+        temp = self._read_temp()
+        if temp is None:
+            return False
+        if temp >= self.THROTTLE_TEMP and not self._throttled:
+            logger.warning(f"Thermal throttle engaged at {temp:.1f}C")
+            self._throttled = True
+        elif temp < self.RESUME_TEMP and self._throttled:
+            logger.info(f"Thermal throttle released at {temp:.1f}C")
+            self._throttled = False
+        return self._throttled
+
+    @property
+    def temperature(self) -> float | None:
+        return self._read_temp()
+
+    def _read_temp(self) -> float | None:
+        try:
+            with open(self.THERMAL_ZONE) as f:
+                return int(f.read().strip()) / 1000.0
+        except (FileNotFoundError, ValueError, PermissionError):
+            return None
+
+
 class InferencePipeline:
     """End-to-end AI pipeline for vehicle and plate detection."""
 
     def __init__(self, config_path: str = "config.yaml"):
-        with open(config_path) as f:
-            self.config = yaml.safe_load(f)
+        try:
+            with open(config_path) as f:
+                self.config = yaml.safe_load(f)
+        except FileNotFoundError:
+            logger.error(f"Config file not found: {config_path}")
+            raise
+        except yaml.YAMLError as e:
+            logger.error(f"Invalid YAML in {config_path}: {e}")
+            raise
+
+        precision = self.config.get("precision", "fp16")
 
         pipeline_cfg = self.config.get("pipeline", {})
         self.max_fps = pipeline_cfg.get("max_fps", 30)
         self.skip_frames = pipeline_cfg.get("skip_frames", 0)
         self.save_captures = pipeline_cfg.get("save_captures", True)
-        self.capture_dir = Path(pipeline_cfg.get("capture_dir", "/data/captures"))
+        self.capture_dir = Path(
+            os.environ.get("CAPTURE_DIR", pipeline_cfg.get("capture_dir", "/data/captures"))
+        )
         self.thumbnail_size = tuple(pipeline_cfg.get("thumbnail_size", [320, 240]))
         self.api_endpoint = pipeline_cfg.get(
             "api_endpoint", "http://backend:8000/api/detections/"
@@ -52,37 +110,73 @@ class InferencePipeline:
         self.plate_ocr = PlateOCR(self.config["plate_ocr"])
         self.vehicle_classifier = VehicleClassifier(self.config["vehicle_classifier"])
         self.tracker = MultiObjectTracker(self.config.get("tracker", {}))
+        self.thermal = ThermalMonitor()
 
         self._frame_count = 0
         self._api_token: str | None = None
-        self._http_client = httpx.AsyncClient(timeout=5.0)
+        self._http_client = httpx.AsyncClient(
+            timeout=5.0,
+            limits=httpx.Limits(max_connections=4, max_keepalive_connections=2),
+        )
+
+        # Async detection dispatch queue (non-blocking sends)
+        self._dispatch_queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=64)
+        self._dispatcher_task: asyncio.Task | None = None
+
+        # Performance counters
+        self._perf_sum_ms = 0.0
+        self._perf_count = 0
 
         logger.info("AI pipeline initialized")
+
+    async def start_dispatcher(self):
+        """Start the background API dispatch task."""
+        self._dispatcher_task = asyncio.create_task(self._dispatch_loop())
+
+    async def _dispatch_loop(self):
+        """Background task that sends detections to API without blocking pipeline."""
+        while True:
+            try:
+                result = await self._dispatch_queue.get()
+                await self._send_detection(result)
+                self._dispatch_queue.task_done()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning(f"Dispatch error: {e}")
 
     async def process_frame(
         self,
         frame: np.ndarray,
+        timestamp: float | None = None,
         latitude: float | None = None,
         longitude: float | None = None,
         heading: float | None = None,
         speed: float | None = None,
+        is_night: bool = False,
     ) -> list[dict]:
         """Process a single frame through the complete pipeline.
 
         Args:
             frame: BGR image from camera
+            timestamp: Frame capture wall-clock time (epoch seconds)
             latitude: GPS latitude
             longitude: GPS longitude
             heading: GPS heading in degrees
             speed: Speed in mph
+            is_night: Whether the camera is in night/IR mode
 
         Returns:
-            List of detection results
+            List of detection results (duplicates filtered)
         """
         self._frame_count += 1
 
-        # Skip frames if configured
-        if self.skip_frames > 0 and self._frame_count % (self.skip_frames + 1) != 0:
+        # Thermal-aware frame skipping
+        effective_skip = self.skip_frames
+        if self.thermal.is_throttled:
+            effective_skip = max(effective_skip, 2)
+
+        if effective_skip > 0 and self._frame_count % (effective_skip + 1) != 0:
             return []
 
         start_time = time.monotonic()
@@ -94,6 +188,12 @@ class InferencePipeline:
         # 2. Update tracker
         confirmed_tracks = self.tracker.update(vehicle_detections)
 
+        # Build track ID lookup for classification caching
+        track_by_bbox: dict[tuple, int] = {}
+        for track in confirmed_tracks:
+            tb = tuple(track.bbox)
+            track_by_bbox[tb] = track.track_id
+
         # 3. For each detected vehicle, detect plates and classify
         for det in vehicle_detections:
             bbox = det["bbox"]
@@ -101,6 +201,11 @@ class InferencePipeline:
 
             if vehicle_img.size == 0:
                 continue
+
+            frame_ts = timestamp or time.time()
+
+            # Find matching track ID for this detection (by closest bbox)
+            det_track_id = self._find_track_id(bbox, track_by_bbox)
 
             result = {
                 "id": str(uuid.uuid4()),
@@ -112,49 +217,62 @@ class InferencePipeline:
                 "heading": heading,
                 "speed": speed,
                 "plate_reads": [],
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": datetime.fromtimestamp(frame_ts, tz=timezone.utc).isoformat(),
             }
 
-            # 3a. Classify vehicle (year/make/model/color)
-            classification = self.vehicle_classifier.classify(vehicle_img)
-            if classification:
-                result["vehicle_make"] = classification.get("make")
-                result["vehicle_model"] = classification.get("model")
-                result["vehicle_year"] = classification.get("year")
-                result["vehicle_color"] = classification.get("color")
-
-            # 3b. Detect plates within vehicle region
+            # 3a. Detect plates first (higher priority than classification)
             plate_detections = self.plate_detector.detect(vehicle_img)
 
             for plate_det in plate_detections:
                 plate_bbox = plate_det["bbox"]
                 plate_img = self.plate_detector.extract_plate_image(
-                    vehicle_img, plate_bbox
+                    vehicle_img, plate_bbox, is_night=is_night
                 )
 
-                # 3c. OCR the plate
-                ocr_result = self.plate_ocr.read(plate_img)
+                # Compute full-frame plate bbox (accounting for padding offset)
+                pad_frac = 0.1  # matches extract_plate_image default
+                pad_x = int(plate_bbox[2] * pad_frac)
+                pad_y = int(plate_bbox[3] * pad_frac)
+                full_plate_bbox = [
+                    bbox[0] + max(0, plate_bbox[0] - pad_x),
+                    bbox[1] + max(0, plate_bbox[1] - pad_y),
+                    plate_bbox[2] + 2 * pad_x,
+                    plate_bbox[3] + 2 * pad_y,
+                ]
+
+                # 3b. OCR the plate (with state, bbox for merging)
+                ocr_result = self.plate_ocr.read(
+                    plate_img,
+                    plate_bbox=full_plate_bbox,
+                )
                 if ocr_result:
+                    # Skip duplicates (same plate seen within TTL)
+                    if ocr_result.get("is_duplicate"):
+                        continue
+
                     plate_read = {
                         "plate_text": ocr_result["plate_text"],
                         "confidence": ocr_result["confidence"],
                         "raw_ocr": ocr_result["raw_ocr"],
-                        "plate_bbox": [
-                            bbox[0] + plate_bbox[0],
-                            bbox[1] + plate_bbox[1],
-                            plate_bbox[2],
-                            plate_bbox[3],
-                        ],
+                        "plate_bbox": full_plate_bbox,
                     }
 
-                    # Save plate image
                     if self.save_captures:
                         plate_path = self._save_plate_image(plate_img)
                         plate_read["plate_image_path"] = plate_path
 
                     result["plate_reads"].append(plate_read)
 
-            # Save full frame capture
+            # 3c. Classify vehicle (after plates — lower priority, uses track cache)
+            classification = self.vehicle_classifier.classify(
+                vehicle_img, track_id=det_track_id
+            )
+            if classification:
+                result["vehicle_make"] = classification.get("make")
+                result["vehicle_model"] = classification.get("model")
+                result["vehicle_year"] = classification.get("year")
+                result["vehicle_color"] = classification.get("color")
+
             if self.save_captures and (result["plate_reads"] or det["confidence"] > 0.8):
                 img_path, thumb_path = self._save_capture(frame, bbox)
                 result["image_path"] = img_path
@@ -162,16 +280,34 @@ class InferencePipeline:
 
             results.append(result)
 
-            # Send to backend API
-            await self._send_detection(result)
+            # Non-blocking dispatch to API (only if we have plate reads or high-conf vehicle)
+            if result["plate_reads"] or det["confidence"] > 0.8:
+                try:
+                    self._dispatch_queue.put_nowait(result)
+                except asyncio.QueueFull:
+                    logger.debug("Dispatch queue full, dropping oldest detection")
+                    try:
+                        self._dispatch_queue.get_nowait()
+                        self._dispatch_queue.put_nowait(result)
+                    except asyncio.QueueEmpty:
+                        pass
 
-        elapsed = time.monotonic() - start_time
-        if elapsed > 0 and self._frame_count % 30 == 0:
-            logger.debug(
+        # Performance tracking
+        elapsed_ms = (time.monotonic() - start_time) * 1000
+        self._perf_sum_ms += elapsed_ms
+        self._perf_count += 1
+
+        if self._frame_count % 30 == 0:
+            avg_ms = self._perf_sum_ms / max(self._perf_count, 1)
+            temp = self.thermal.temperature
+            temp_str = f", {temp:.0f}C" if temp is not None else ""
+            logger.info(
                 f"Pipeline: {len(vehicle_detections)} vehicles, "
                 f"{sum(len(r['plate_reads']) for r in results)} plates, "
-                f"{elapsed*1000:.0f}ms"
+                f"{elapsed_ms:.1f}ms (avg {avg_ms:.1f}ms){temp_str}"
             )
+            self._perf_sum_ms = 0.0
+            self._perf_count = 0
 
         return results
 
@@ -217,8 +353,44 @@ class InferencePipeline:
             await self._http_client.post(
                 self.api_endpoint, json=payload, headers=headers
             )
-        except Exception as e:
+        except httpx.RequestError as e:
             logger.warning(f"Failed to send detection to API: {e}")
+        except Exception as e:
+            logger.warning(f"Unexpected dispatch error: {e}")
+
+    @staticmethod
+    def _find_track_id(
+        det_bbox: list[int], track_by_bbox: dict[tuple, int]
+    ) -> int | None:
+        """Find the track ID whose bbox best matches a detection bbox.
+
+        Uses IoU matching to associate detections with confirmed tracks.
+        Returns None if no track overlaps sufficiently (IoU > 0.3).
+        """
+        if not track_by_bbox:
+            return None
+
+        best_id = None
+        best_iou = 0.3  # minimum IoU threshold
+
+        dx, dy, dw, dh = det_bbox
+        da = dw * dh
+        if da <= 0:
+            return None
+
+        for (tx, ty, tw, th), tid in track_by_bbox.items():
+            ix1 = max(dx, tx)
+            iy1 = max(dy, ty)
+            ix2 = min(dx + dw, tx + tw)
+            iy2 = min(dy + dh, ty + th)
+            inter = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+            union = da + tw * th - inter
+            iou = inter / max(union, 1e-6)
+            if iou > best_iou:
+                best_iou = iou
+                best_id = tid
+
+        return best_id
 
     def _crop(self, frame: np.ndarray, bbox: list[int]) -> np.ndarray:
         h, w = frame.shape[:2]
@@ -236,7 +408,6 @@ class InferencePipeline:
         day_dir = self.capture_dir / datetime.now().strftime("%Y-%m-%d")
         day_dir.mkdir(parents=True, exist_ok=True)
 
-        # Full image with bounding box drawn
         annotated = frame.copy()
         x, y, w, h = bbox
         cv2.rectangle(annotated, (x, y), (x + w, y + h), (0, 255, 0), 2)
@@ -244,7 +415,6 @@ class InferencePipeline:
         img_path = str(day_dir / f"{ts}_full.jpg")
         cv2.imwrite(img_path, annotated, [cv2.IMWRITE_JPEG_QUALITY, 85])
 
-        # Thumbnail
         thumb = cv2.resize(annotated, self.thumbnail_size)
         thumb_path = str(day_dir / f"{ts}_thumb.jpg")
         cv2.imwrite(thumb_path, thumb, [cv2.IMWRITE_JPEG_QUALITY, 70])
@@ -268,18 +438,33 @@ class InferencePipeline:
         self._frame_count = 0
 
     async def cleanup(self):
+        if self._dispatcher_task:
+            self._dispatcher_task.cancel()
+            try:
+                await self._dispatcher_task
+            except asyncio.CancelledError:
+                pass
         await self._http_client.aclose()
+
+        # Release GPU resources
+        self.vehicle_detector.engine.close()
+        self.plate_detector.engine.close()
+        self.plate_ocr.engine.close()
+        self.vehicle_classifier.engine.close()
 
 
 async def main():
     """Main entry point for the AI pipeline service."""
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+    )
 
     config_path = os.environ.get("AI_CONFIG", "config.yaml")
     pipeline = InferencePipeline(config_path)
 
-    # In production, frames come from the camera service via shared memory or Redis
-    # For development, we can read from a video file or camera device
+    await pipeline.start_dispatcher()
+
     import redis.asyncio as aioredis
 
     redis_url = os.environ.get("REDIS_URL", "redis://redis:6379/0")
@@ -290,24 +475,35 @@ async def main():
     pubsub = redis_client.pubsub()
     await pubsub.subscribe("reposcan:frames")
 
+    frame_min_interval = 1.0 / pipeline.max_fps
+    last_process_time = 0.0
+
     try:
         async for message in pubsub.listen():
-            if message["type"] == "message":
-                # Decode frame from Redis
-                frame_data = json.loads(message["data"])
-                frame_bytes = np.frombuffer(
-                    bytes.fromhex(frame_data["frame"]), dtype=np.uint8
-                )
-                frame = cv2.imdecode(frame_bytes, cv2.IMREAD_COLOR)
+            if message["type"] != "message":
+                continue
 
-                if frame is not None:
-                    await pipeline.process_frame(
-                        frame,
-                        latitude=frame_data.get("latitude"),
-                        longitude=frame_data.get("longitude"),
-                        heading=frame_data.get("heading"),
-                        speed=frame_data.get("speed"),
-                    )
+            # Backpressure: skip frame if still within budget
+            now = time.monotonic()
+            if now - last_process_time < frame_min_interval:
+                continue
+
+            frame_data = json.loads(message["data"])
+            frame_bytes = np.frombuffer(
+                bytes.fromhex(frame_data["frame"]), dtype=np.uint8
+            )
+            frame = cv2.imdecode(frame_bytes, cv2.IMREAD_COLOR)
+
+            if frame is not None:
+                last_process_time = time.monotonic()
+                await pipeline.process_frame(
+                    frame,
+                    timestamp=frame_data.get("timestamp"),
+                    latitude=frame_data.get("latitude"),
+                    longitude=frame_data.get("longitude"),
+                    heading=frame_data.get("heading"),
+                    speed=frame_data.get("speed"),
+                )
     except asyncio.CancelledError:
         pass
     finally:

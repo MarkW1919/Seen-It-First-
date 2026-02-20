@@ -4,6 +4,25 @@ import type { WSMessage, WSAlert, HotListAlert } from "../types";
 
 const WS_RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 15000];
 
+// Reuse a single AudioContext across the lifetime of the app to avoid
+// creating a new heavyweight context on every alert (blocks UI thread)
+let sharedAudioCtx: AudioContext | null = null;
+
+function getAudioContext(): AudioContext | null {
+  try {
+    if (!sharedAudioCtx || sharedAudioCtx.state === "closed") {
+      sharedAudioCtx = new AudioContext();
+    }
+    // Resume if suspended (browser autoplay policy)
+    if (sharedAudioCtx.state === "suspended") {
+      sharedAudioCtx.resume();
+    }
+    return sharedAudioCtx;
+  } catch {
+    return null;
+  }
+}
+
 export function useWebSocket() {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectAttempt = useRef(0);
@@ -13,10 +32,15 @@ export function useWebSocket() {
   const alertSoundEnabled = useAppStore((s) => s.alertSoundEnabled);
   const alertVibrationEnabled = useAppStore((s) => s.alertVibrationEnabled);
 
+  // Track recently seen alert IDs to deduplicate at the WS layer
+  const recentAlertIds = useRef<Set<string>>(new Set());
+
   const playAlertSound = useCallback(() => {
     if (!alertSoundEnabled) return;
+    const ctx = getAudioContext();
+    if (!ctx) return;
+
     try {
-      const ctx = new AudioContext();
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.connect(gain);
@@ -27,15 +51,19 @@ export function useWebSocket() {
       osc.start();
       osc.stop(ctx.currentTime + 0.3);
       setTimeout(() => {
-        const osc2 = ctx.createOscillator();
-        const gain2 = ctx.createGain();
-        osc2.connect(gain2);
-        gain2.connect(ctx.destination);
-        osc2.frequency.value = 1100;
-        osc2.type = "square";
-        gain2.gain.value = 0.3;
-        osc2.start();
-        osc2.stop(ctx.currentTime + 0.5);
+        try {
+          const osc2 = ctx.createOscillator();
+          const gain2 = ctx.createGain();
+          osc2.connect(gain2);
+          gain2.connect(ctx.destination);
+          osc2.frequency.value = 1100;
+          osc2.type = "square";
+          gain2.gain.value = 0.3;
+          osc2.start();
+          osc2.stop(ctx.currentTime + 0.5);
+        } catch {
+          // Audio playback error on second tone
+        }
       }, 300);
     } catch {
       // Audio not available
@@ -68,6 +96,20 @@ export function useWebSocket() {
 
         if (msg.type === "hotlist_alert") {
           const alertMsg = msg as WSAlert;
+
+          // Deduplicate at the WS message layer — skip if we already processed this alert ID
+          if (recentAlertIds.current.has(alertMsg.alert_id)) {
+            return;
+          }
+          recentAlertIds.current.add(alertMsg.alert_id);
+          // Cap the set size to prevent unbounded growth
+          if (recentAlertIds.current.size > 500) {
+            const iter = recentAlertIds.current.values();
+            for (let i = 0; i < 250; i++) {
+              recentAlertIds.current.delete(iter.next().value as string);
+            }
+          }
+
           const alert: HotListAlert = {
             id: alertMsg.alert_id,
             hotlist_entry_id: alertMsg.hotlist_entry_id,
@@ -84,19 +126,29 @@ export function useWebSocket() {
             created_at: alertMsg.timestamp,
             hotlist_entry: null,
           };
-          addAlert(alert);
-          playAlertSound();
-          vibrateAlert();
 
-          // Show system notification
-          if (Notification.permission === "granted") {
-            new Notification("HOT LIST MATCH", {
-              body: `Plate: ${alertMsg.plate_text}\nConfidence: ${(alertMsg.confidence * 100).toFixed(0)}%`,
-              icon: "/icons/icon-192.png",
-              tag: alertMsg.alert_id,
-              requireInteraction: true,
-            });
-          }
+          // Update store first (synchronous, fast)
+          addAlert(alert);
+
+          // Defer audio/vibration/notification to next microtask so we don't
+          // block the WebSocket message handler on the UI thread
+          queueMicrotask(() => {
+            playAlertSound();
+            vibrateAlert();
+
+            // Show system notification
+            if (
+              "Notification" in window &&
+              Notification.permission === "granted"
+            ) {
+              new Notification("HOT LIST MATCH", {
+                body: `Plate: ${alertMsg.plate_text}\nConfidence: ${(alertMsg.confidence * 100).toFixed(0)}%`,
+                icon: "/icons/icon-192.png",
+                tag: alertMsg.alert_id,
+                requireInteraction: true,
+              });
+            }
+          });
         }
       } catch {
         // Skip invalid messages

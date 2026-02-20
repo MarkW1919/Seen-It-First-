@@ -3,6 +3,7 @@ from datetime import datetime
 
 from geoalchemy2 import Geometry
 from sqlalchemy import (
+    Index,
     String,
     Float,
     Integer,
@@ -19,15 +20,21 @@ from app.database import Base
 
 class Detection(Base):
     __tablename__ = "detections"
+    __table_args__ = (
+        # Composite index for list_detections filtered by agent + time range
+        Index("ix_detections_agent_created", "agent_id", "created_at"),
+        # Composite index for list_detections filtered by session + time range
+        Index("ix_detections_session_created", "session_id", "created_at"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     agent_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True
     )
     session_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("scan_sessions.id"), nullable=True
+        UUID(as_uuid=True), ForeignKey("scan_sessions.id"), nullable=True, index=True
     )
 
     # Vehicle detection
@@ -74,17 +81,21 @@ class Detection(Base):
 
 class PlateRead(Base):
     __tablename__ = "plate_reads"
+    __table_args__ = (
+        # Composite index for plate search joined with detection ordering
+        Index("ix_plate_reads_text_detection", "plate_text", "detection_id"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     detection_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("detections.id", ondelete="CASCADE")
+        UUID(as_uuid=True), ForeignKey("detections.id", ondelete="CASCADE"), index=True
     )
 
     # Plate data
     plate_text: Mapped[str] = mapped_column(String(20), index=True)
-    plate_state: Mapped[str] = mapped_column(String(5), nullable=True)
+    plate_state: Mapped[str] = mapped_column(String(5), nullable=True, index=True)
     plate_type: Mapped[str] = mapped_column(
         String(20), nullable=True
     )  # standard, temp, dealer, etc.

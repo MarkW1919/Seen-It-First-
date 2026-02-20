@@ -71,12 +71,18 @@ export const useAppStore = create<AppState>()(
         })),
       clearLiveFeed: () => set({ liveFeed: [] }),
 
-      // Alerts
+      // Alerts (with deduplication by alert ID)
       activeAlerts: [],
       addAlert: (alert) =>
-        set((state) => ({
-          activeAlerts: [alert, ...state.activeAlerts].slice(0, 50),
-        })),
+        set((state) => {
+          // Deduplicate: skip if an alert with this ID already exists
+          if (state.activeAlerts.some((a) => a.id === alert.id)) {
+            return state;
+          }
+          return {
+            activeAlerts: [alert, ...state.activeAlerts].slice(0, 50),
+          };
+        }),
       dismissAlert: (alertId) =>
         set((state) => ({
           activeAlerts: state.activeAlerts.filter((a) => a.id !== alertId),

@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 
 from geoalchemy2.functions import ST_MakePoint
-from sqlalchemy import select, func, and_, or_
+from sqlalchemy import select, func, and_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -46,30 +46,42 @@ async def create_detection(
     db.add(detection)
     await db.flush()
 
-    # Create plate reads
-    for pr in data.plate_reads:
-        plate_read = PlateRead(
-            detection_id=detection.id,
-            plate_text=pr.plate_text.upper().strip(),
-            plate_state=pr.plate_state,
-            plate_type=pr.plate_type,
-            confidence=pr.confidence,
-            plate_image_path=pr.plate_image_path,
-            plate_bbox_x=pr.plate_bbox_x,
-            plate_bbox_y=pr.plate_bbox_y,
-            plate_bbox_w=pr.plate_bbox_w,
-            plate_bbox_h=pr.plate_bbox_h,
-            raw_ocr=pr.raw_ocr,
-            ocr_alternatives=pr.ocr_alternatives,
-        )
-        db.add(plate_read)
+    # Bulk-create plate reads via add_all (single batch instead of per-row add)
+    if data.plate_reads:
+        plate_reads = [
+            PlateRead(
+                detection_id=detection.id,
+                plate_text=pr.plate_text.upper().strip(),
+                plate_state=pr.plate_state,
+                plate_type=pr.plate_type,
+                confidence=pr.confidence,
+                plate_image_path=pr.plate_image_path,
+                plate_bbox_x=pr.plate_bbox_x,
+                plate_bbox_y=pr.plate_bbox_y,
+                plate_bbox_w=pr.plate_bbox_w,
+                plate_bbox_h=pr.plate_bbox_h,
+                raw_ocr=pr.raw_ocr,
+                ocr_alternatives=pr.ocr_alternatives,
+            )
+            for pr in data.plate_reads
+        ]
+        db.add_all(plate_reads)
 
-    # Update session counters
+    # Update session counters using SQL-level atomic increment.
+    # The previous Python-level `session.total_detections += 1` caused a
+    # lost-update race: two concurrent requests read the same value, both
+    # increment to N+1, and the last write wins (losing a count).
+    # SQL `SET col = col + 1` is atomic within the transaction.
     if data.session_id:
-        session = await db.get(ScanSession, data.session_id)
-        if session:
-            session.total_detections += 1
-            session.total_plates += len(data.plate_reads)
+        plate_count = len(data.plate_reads)
+        await db.execute(
+            update(ScanSession)
+            .where(ScanSession.id == data.session_id)
+            .values(
+                total_detections=ScanSession.total_detections + 1,
+                total_plates=ScanSession.total_plates + plate_count,
+            )
+        )
 
     await db.flush()
     return detection
@@ -129,21 +141,28 @@ async def search_by_plate(
     page: int = 1,
     page_size: int = 50,
 ) -> tuple[list[Detection], int]:
-    query = (
-        select(Detection)
-        .join(PlateRead)
-        .options(selectinload(Detection.plate_reads))
-    )
-    count_query = select(func.count(Detection.id.distinct())).join(PlateRead)
-
     plate_upper = plate_text.upper().strip()
     if exact:
         plate_filter = PlateRead.plate_text == plate_upper
     else:
         plate_filter = PlateRead.plate_text.ilike(f"%{plate_upper}%")
 
-    query = query.where(plate_filter)
-    count_query = count_query.where(plate_filter)
+    # Use DISTINCT on the main query to avoid duplicate Detection rows when
+    # a detection has multiple plate reads matching the filter.  Previously
+    # the deduplication was done in Python via result.unique() which wasted
+    # bandwidth sending duplicate rows from DB to application.
+    query = (
+        select(Detection)
+        .join(PlateRead)
+        .options(selectinload(Detection.plate_reads))
+        .where(plate_filter)
+        .distinct()
+    )
+    count_query = (
+        select(func.count(Detection.id.distinct()))
+        .join(PlateRead)
+        .where(plate_filter)
+    )
 
     total = (await db.execute(count_query)).scalar() or 0
 
@@ -154,7 +173,7 @@ async def search_by_plate(
     )
 
     result = await db.execute(query)
-    return list(result.unique().scalars().all()), total
+    return list(result.scalars().all()), total
 
 
 async def search_nearby(

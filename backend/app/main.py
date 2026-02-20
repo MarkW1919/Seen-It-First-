@@ -8,9 +8,10 @@ from fastapi.staticfiles import StaticFiles
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.config import get_settings
-from app.database import init_db
+from app.database import init_db, async_session
 from app.routers import auth, detections, hotlist, plates, search, camera, system
 from app.services.alert_service import alert_service
+from app.services.hotlist_service import hotlist_cache
 from app.websocket.handler import websocket_endpoint, redis_listener
 
 settings = get_settings()
@@ -24,6 +25,11 @@ async def lifespan(app: FastAPI):
     await init_db()
     await alert_service.connect()
 
+    # Initialize the hotlist Redis cache with current DB data
+    await hotlist_cache.connect()
+    async with async_session() as db:
+        await hotlist_cache.load_from_db(db)
+
     # Start Redis listener for WebSocket forwarding
     listener_task = asyncio.create_task(redis_listener())
 
@@ -35,6 +41,7 @@ async def lifespan(app: FastAPI):
         await listener_task
     except asyncio.CancelledError:
         pass
+    await hotlist_cache.disconnect()
     await alert_service.disconnect()
     logger.info("RepoScan Pro backend stopped.")
 

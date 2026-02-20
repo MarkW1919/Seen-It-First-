@@ -1,0 +1,33 @@
+# Ruff configuration for RepoScan Pro Python code
+target-version = "py312"
+line-length = 100
+
+[lint]
+select = [
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "F",     # pyflakes
+    "I",     # isort
+    "N",     # pep8-naming
+    "UP",    # pyupgrade
+    "B",     # flake8-bugbear
+    "SIM",   # flake8-simplify
+    "TCH",   # flake8-type-checking
+    "RUF",   # ruff-specific
+]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+    "B008",  # do not perform function call in argument defaults (FastAPI Depends)
+]
+
+[lint.per-file-ignores]
+"backend/alembic/versions/*.py" = ["E402", "F401"]
+"backend/alembic/env.py" = ["F401", "F403"]
+"backend/tests/*.py" = ["S101"]  # assert is fine in tests
+
+[lint.isort]
+known-first-party = ["app", "ai", "camera"]
+
+[format]
+quote-style = "double"
+indent-style = "space"
