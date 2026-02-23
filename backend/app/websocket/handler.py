@@ -18,6 +18,13 @@ REDIS_RECONNECT_DELAYS = [1, 2, 4, 8, 15, 30]
 
 
 class ConnectionManager:
+    """WebSocket connection manager with minimal lock contention.
+
+    Uses a snapshot-based broadcast to avoid holding the lock during I/O.
+    Pre-serializes JSON once for all clients (avoids N json.dumps calls).
+    Batches disconnect cleanup to reduce lock acquisitions.
+    """
+
     def __init__(self) -> None:
         # Use a dict keyed by unique connection ID (not user ID) to support
         # multiple connections per user without overwriting
@@ -38,6 +45,16 @@ class ConnectionManager:
             self.active_connections.pop(conn_id, None)
         logger.info("WebSocket client disconnected: %s", conn_id)
 
+    async def _disconnect_batch(self, conn_ids: list[str]) -> None:
+        """Remove multiple connections in a single lock acquisition."""
+        if not conn_ids:
+            return
+        async with self._lock:
+            for conn_id in conn_ids:
+                self.active_connections.pop(conn_id, None)
+        for conn_id in conn_ids:
+            logger.info("WebSocket client disconnected: %s", conn_id)
+
     async def send_to_client(self, conn_id: str, message: dict) -> None:
         async with self._lock:
             ws = self.active_connections.get(conn_id)
@@ -50,8 +67,10 @@ class ConnectionManager:
     async def broadcast(self, message: dict) -> None:
         """Send message to ALL connected clients concurrently.
 
-        Uses asyncio.gather so a slow client cannot block delivery to others.
-        Each send has an individual timeout to prevent indefinite hangs.
+        Optimizations over naive approach:
+        - Pre-serializes JSON once (not per-client)
+        - Takes a snapshot to release lock before I/O
+        - Batches disconnect cleanup into single lock acquisition
         """
         async with self._lock:
             snapshot = dict(self.active_connections)
@@ -59,9 +78,12 @@ class ConnectionManager:
         if not snapshot:
             return
 
+        # Pre-serialize once for all clients (avoids N redundant json.dumps)
+        text = json.dumps(message)
+
         async def _safe_send(conn_id: str, ws: WebSocket) -> str | None:
             try:
-                await asyncio.wait_for(ws.send_json(message), timeout=SEND_TIMEOUT_SECONDS)
+                await asyncio.wait_for(ws.send_text(text), timeout=SEND_TIMEOUT_SECONDS)
                 return None
             except (asyncio.TimeoutError, Exception):
                 return conn_id
@@ -71,10 +93,10 @@ class ConnectionManager:
             return_exceptions=True,
         )
 
-        # Clean up failed connections
-        for result in results:
-            if isinstance(result, str):
-                await self.disconnect(result)
+        # Batch cleanup of failed connections (single lock acquisition)
+        failed = [r for r in results if isinstance(r, str)]
+        if failed:
+            await self._disconnect_batch(failed)
 
 
 manager = ConnectionManager()

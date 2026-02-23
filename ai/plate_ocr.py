@@ -337,6 +337,9 @@ class PlateOCR:
             onnx_path=config.get("onnx_path"),
         )
 
+        # Pre-created CLAHE (reused every preprocess call, eliminates per-call alloc)
+        self._clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+
         # Duplicate suppression: same plate within TTL window is suppressed
         dup_ttl = config.get("duplicate_ttl", 3.0)
         dup_maxsize = config.get("duplicate_cache_size", 256)
@@ -352,15 +355,15 @@ class PlateOCR:
         """Preprocess plate image for CRNN.
 
         Converts to grayscale, enhances contrast, resizes, and normalizes.
+        Uses pre-created CLAHE instance (no per-call allocation).
         """
         if len(plate_img.shape) == 3:
             gray = cv2.cvtColor(plate_img, cv2.COLOR_BGR2GRAY)
         else:
             gray = plate_img
 
-        # CLAHE for contrast enhancement
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        enhanced = clahe.apply(gray)
+        # CLAHE for contrast enhancement (reuse instance from __init__)
+        enhanced = self._clahe.apply(gray)
 
         # Resize to fixed input size
         resized = cv2.resize(

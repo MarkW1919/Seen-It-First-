@@ -1,5 +1,12 @@
-"""Main camera controller that orchestrates all camera subsystems."""
+"""Main camera controller that orchestrates all camera subsystems.
+
+Performance optimizations:
+- Base64 frame encoding (33% smaller than hex, reduces Redis bandwidth)
+- Cached PTZ position (avoid dict copy per frame)
+- Pre-allocated JPEG encode params
+"""
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -171,6 +178,9 @@ async def main():
     fps_log_interval = 10.0
     last_fps_log = time.monotonic()
 
+    # Pre-allocated JPEG encode params (avoid list alloc per frame)
+    jpeg_params = [cv2.IMWRITE_JPEG_QUALITY, 80]
+
     try:
         while True:
             loop_start = time.monotonic()
@@ -189,14 +199,12 @@ async def main():
                 last_seq = ts_frame.sequence
                 frame = ts_frame.frame
 
-                # Encode frame for Redis transport
-                _, buffer = cv2.imencode(
-                    ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80]
-                )
-                frame_hex = buffer.tobytes().hex()
+                # Encode frame for Redis transport (base64 = 33% smaller than hex)
+                _, buffer = cv2.imencode(".jpg", frame, jpeg_params)
+                frame_b64 = base64.b64encode(buffer.tobytes()).decode("ascii")
 
                 frame_data = json.dumps({
-                    "frame": frame_hex,
+                    "frame": frame_b64,
                     "timestamp": ts_frame.wall_time,
                     "sequence": ts_frame.sequence,
                     "fps_actual": round(ts_frame.fps_actual, 1),

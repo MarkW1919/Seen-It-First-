@@ -134,6 +134,10 @@ class VehicleClassifier:
         cache_size = config.get("cache_size", 128)
         self.cache = _ClassificationCache(maxsize=cache_size, ttl=cache_ttl)
 
+        # Pre-computed ImageNet normalization arrays (eliminates per-call np.array alloc)
+        self._imagenet_mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+        self._imagenet_std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+
     def _validate_labels_once(self, outputs: list[np.ndarray]):
         """Validate label counts against model output shapes on first inference."""
         if self._labels_validated:
@@ -177,11 +181,9 @@ class VehicleClassifier:
         interp = cv2.INTER_AREA if current_h > self.input_h else cv2.INTER_LINEAR
         resized = cv2.resize(rgb, (self.input_w, self.input_h), interpolation=interp)
 
-        # Normalize with ImageNet statistics (RGB order)
+        # Normalize with ImageNet statistics (RGB order, pre-computed arrays)
         blob = resized.astype(np.float32) / 255.0
-        mean = np.array([0.485, 0.456, 0.406])
-        std = np.array([0.229, 0.224, 0.225])
-        blob = (blob - mean) / std
+        blob = (blob - self._imagenet_mean) / self._imagenet_std
 
         # HWC -> NCHW
         blob = blob.transpose(2, 0, 1)[np.newaxis, ...]

@@ -48,11 +48,12 @@ class ImagePreprocessor:
         return result
 
     def _apply_clahe(self, frame: np.ndarray) -> np.ndarray:
-        """Apply CLAHE contrast enhancement to luminance channel only."""
+        """Apply CLAHE contrast enhancement to luminance channel only.
+
+        Uses in-place L-channel replacement to avoid intermediate list alloc.
+        """
         lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
-        channels = list(cv2.split(lab))
-        channels[0] = self._clahe.apply(channels[0])
-        lab = cv2.merge(channels)
+        lab[:, :, 0] = self._clahe.apply(lab[:, :, 0])
         return cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
 
     def _denoise(self, frame: np.ndarray) -> np.ndarray:

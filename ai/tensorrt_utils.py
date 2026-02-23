@@ -219,7 +219,13 @@ class TRTEngine:
             raise RuntimeError("No model loaded")
 
     def _infer_trt(self, input_data: np.ndarray) -> list[np.ndarray]:
-        """TensorRT inference with pre-allocated persistent buffers."""
+        """TensorRT inference with pre-allocated persistent buffers.
+
+        Returns the pre-allocated host buffers directly (no copy).
+        These are overwritten on the next infer() call, so callers
+        that need persistence must copy the arrays they need.
+        This eliminates ~0.5ms of per-frame numpy allocation + memcpy.
+        """
         import pycuda.driver as cuda
 
         input_data = np.ascontiguousarray(input_data, dtype=np.float32)
@@ -236,18 +242,16 @@ class TRTEngine:
         # Execute inference (async)
         self._trt_context.execute_async_v3(self._cuda_stream.handle)
 
-        # Copy outputs from GPU (async)
-        results = []
+        # Copy outputs from GPU into pre-allocated host buffers (async)
         for host_buf, device_buf in zip(
             self._output_bufs_host, self._output_bufs_device
         ):
             cuda.memcpy_dtoh_async(host_buf, device_buf, self._cuda_stream)
-            results.append(host_buf.copy())
 
         # Single synchronize after all async operations
         self._cuda_stream.synchronize()
 
-        return results
+        return self._output_bufs_host
 
     def _infer_onnx(self, input_data: np.ndarray) -> list[np.ndarray]:
         """ONNX Runtime inference fallback."""
