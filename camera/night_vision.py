@@ -6,6 +6,7 @@ Improved with:
 - Non-blocking IR transition (removed blocking sleep)
 - Exponential moving average for lux smoothing
 """
+
 import logging
 import threading
 import time
@@ -101,13 +102,10 @@ class NightVisionController:
         if frame is None:
             return self._ema_lux
 
-        if len(frame.shape) == 3:
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        else:
-            gray = frame
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if len(frame.shape) == 3 else frame
 
         # Downsample to 160x120 for fast percentile (lux doesn't need full res)
-        h, w = gray.shape[:2]
+        _h, w = gray.shape[:2]
         if w > 320:
             gray = cv2.resize(gray, (160, 120), interpolation=cv2.INTER_AREA)
 

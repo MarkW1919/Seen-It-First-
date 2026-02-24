@@ -4,6 +4,7 @@ Performance optimizations:
 - Pre-allocated letterbox buffer reused across frames (eliminates ~1.2MB/frame alloc)
 - Channel-separated copy avoids intermediate transpose array
 """
+
 import logging
 
 import cv2
@@ -54,7 +55,7 @@ class VehicleDetector:
         self._blob[0, 0] = self._padded[:, :, 0]
         self._blob[0, 1] = self._padded[:, :, 1]
         self._blob[0, 2] = self._padded[:, :, 2]
-        self._blob *= (1.0 / 255.0)
+        self._blob *= 1.0 / 255.0
 
         return self._blob, scale, (pad_w, pad_h)
 

@@ -1,11 +1,11 @@
 """Unit tests for application configuration — URL generation, CORS, fail-fast."""
+
 import os
 from unittest.mock import patch
 
 import pytest
 
 from app.config import Settings
-
 
 # ── Database URL generation ──────────────────────────────────────────────────
 
@@ -57,8 +57,11 @@ def test_redis_url_without_password():
 
 def test_redis_url_with_password():
     s = Settings(
-        postgres_password="pw", secret_key="sk",
-        redis_host="cache", redis_port=6380, redis_password="secret",
+        postgres_password="pw",
+        secret_key="sk",
+        redis_host="cache",
+        redis_port=6380,
+        redis_password="secret",
     )
     assert s.redis_url == "redis://:secret@cache:6380/0"
 
@@ -73,7 +76,8 @@ def test_cors_empty_returns_empty_list():
 
 def test_cors_single_origin():
     s = Settings(
-        postgres_password="pw", secret_key="sk",
+        postgres_password="pw",
+        secret_key="sk",
         cors_origins="https://app.example.com",
     )
     assert s.cors_origin_list == ["https://app.example.com"]
@@ -81,7 +85,8 @@ def test_cors_single_origin():
 
 def test_cors_multiple_origins():
     s = Settings(
-        postgres_password="pw", secret_key="sk",
+        postgres_password="pw",
+        secret_key="sk",
         cors_origins="https://a.com, https://b.com ,https://c.com",
     )
     assert s.cors_origin_list == ["https://a.com", "https://b.com", "https://c.com"]
@@ -89,17 +94,21 @@ def test_cors_multiple_origins():
 
 def test_cors_wildcard_blocked_in_production():
     s = Settings(
-        postgres_password="pw", secret_key="sk",
-        cors_origins="*", debug=False,
+        postgres_password="pw",
+        secret_key="sk",
+        cors_origins="*",
+        debug=False,
     )
     with pytest.raises(ValueError, match="wildcard"):
-        s.cors_origin_list
+        _ = s.cors_origin_list
 
 
 def test_cors_wildcard_allowed_in_debug():
     s = Settings(
-        postgres_password="pw", secret_key="sk",
-        cors_origins="*", debug=True,
+        postgres_password="pw",
+        secret_key="sk",
+        cors_origins="*",
+        debug=True,
     )
     assert s.cors_origin_list == ["*"]
 
@@ -112,13 +121,15 @@ def test_get_settings_fails_without_secret_key():
     from app.config import get_settings
 
     get_settings.cache_clear()
-    with patch.dict(os.environ, {"SECRET_KEY": "", "POSTGRES_PASSWORD": "pw"}, clear=False):
-        with pytest.raises(RuntimeError, match="SECRET_KEY"):
-            # Create fresh settings with no secret_key
-            s = Settings(postgres_password="pw", secret_key="")
-            # Simulate the fail-fast check
-            if not s.secret_key:
-                raise RuntimeError("SECRET_KEY environment variable is required.")
+    with (
+        patch.dict(os.environ, {"SECRET_KEY": "", "POSTGRES_PASSWORD": "pw"}, clear=False),
+        pytest.raises(RuntimeError, match="SECRET_KEY"),
+    ):
+        # Create fresh settings with no secret_key
+        s = Settings(postgres_password="pw", secret_key="")
+        # Simulate the fail-fast check
+        if not s.secret_key:
+            raise RuntimeError("SECRET_KEY environment variable is required.")
     get_settings.cache_clear()
 
 

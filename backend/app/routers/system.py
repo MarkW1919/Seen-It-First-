@@ -1,6 +1,5 @@
-import os
 import platform
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -35,7 +34,7 @@ async def get_system_info(_user: User = Depends(get_current_user)):
         version="1.0.0",
         hostname=platform.node(),
         platform=platform.platform(),
-        timestamp=datetime.now(timezone.utc).isoformat(),
+        timestamp=datetime.now(UTC).isoformat(),
     )
 
 

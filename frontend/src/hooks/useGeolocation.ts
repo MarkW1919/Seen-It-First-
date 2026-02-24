@@ -9,15 +9,27 @@ interface GeoPosition {
   timestamp: number;
 }
 
+const GEO_SUPPORTED =
+  typeof navigator !== "undefined" && "geolocation" in navigator;
+
 export function useGeolocation(enabled: boolean = true) {
   const [position, setPosition] = useState<GeoPosition | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(
+    !GEO_SUPPORTED ? "Geolocation not supported" : null
+  );
   const watchId = useRef<number | null>(null);
 
-  const startWatching = useCallback(() => {
-    if (!navigator.geolocation) {
-      setError("Geolocation not supported");
-      return;
+  const stopWatching = useCallback(() => {
+    if (watchId.current !== null) {
+      navigator.geolocation.clearWatch(watchId.current);
+      watchId.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!enabled || !GEO_SUPPORTED) {
+      stopWatching();
+      return stopWatching;
     }
 
     watchId.current = navigator.geolocation.watchPosition(
@@ -41,23 +53,9 @@ export function useGeolocation(enabled: boolean = true) {
         timeout: 10000,
       }
     );
-  }, []);
 
-  const stopWatching = useCallback(() => {
-    if (watchId.current !== null) {
-      navigator.geolocation.clearWatch(watchId.current);
-      watchId.current = null;
-    }
-  }, []);
-
-  useEffect(() => {
-    if (enabled) {
-      startWatching();
-    } else {
-      stopWatching();
-    }
     return stopWatching;
-  }, [enabled, startWatching, stopWatching]);
+  }, [enabled, stopWatching]);
 
   return { position, error };
 }

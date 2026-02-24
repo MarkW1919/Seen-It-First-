@@ -1,15 +1,15 @@
 """Unit tests for auth service — password hashing, JWT, token validation."""
+
 import time
 import uuid
 
 from app.services.auth_service import (
-    hash_password,
-    verify_password,
     create_access_token,
     create_refresh_token,
     decode_token,
+    hash_password,
+    verify_password,
 )
-
 
 # ── Password hashing ────────────────────────────────────────────────────────
 

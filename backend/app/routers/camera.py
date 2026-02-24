@@ -85,9 +85,7 @@ class PTZCommand(BaseModel):
         if v is None:
             return v
         if v < ZOOM_MIN or v > ZOOM_MAX:
-            raise ValueError(
-                f"Zoom must be between {ZOOM_MIN}x and {ZOOM_MAX}x, got {v}x"
-            )
+            raise ValueError(f"Zoom must be between {ZOOM_MIN}x and {ZOOM_MAX}x, got {v}x")
         return v
 
     @field_validator("speed")
@@ -126,9 +124,7 @@ async def get_camera_status(_user: User = Depends(get_current_user)):
 
 
 @router.post("/ptz")
-async def send_ptz_command(
-    cmd: PTZCommand, _user: User = Depends(get_current_user)
-):
+async def send_ptz_command(cmd: PTZCommand, _user: User = Depends(get_current_user)):
     """Send a PTZ command with boundary enforcement.
 
     Pan: 360° range [-180, +180] with wrapping
@@ -171,9 +167,7 @@ async def get_camera_config(_user: User = Depends(get_current_user)):
 
 
 @router.put("/config", response_model=CameraConfig)
-async def update_camera_config(
-    config: CameraConfig, _user: User = Depends(get_current_user)
-):
+async def update_camera_config(config: CameraConfig, _user: User = Depends(get_current_user)):
     global _camera_config
     _camera_config = config
     return _camera_config
@@ -191,9 +185,7 @@ async def trigger_capture(_user: User = Depends(get_current_user)):
 
 
 @router.post("/night-mode/{enabled}")
-async def toggle_night_mode(
-    enabled: bool, _user: User = Depends(get_current_user)
-):
+async def toggle_night_mode(enabled: bool, _user: User = Depends(get_current_user)):
     _camera_status.night_mode = enabled
     _camera_status.ir_enabled = enabled
     return {"night_mode": enabled, "ir_enabled": enabled}

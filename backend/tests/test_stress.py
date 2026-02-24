@@ -1,20 +1,18 @@
 """Stress / concurrency tests — schema validation under load, route state machines."""
+
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
-import pytest
-
+from app.routers.routes import (
+    RouteCreate,
+    StopCreate,
+    _get_stop_by_index,
+    _route_to_response,
+)
 from app.schemas.detection import DetectionCreate, PlateReadCreate
 from app.schemas.hotlist import HotListEntryCreate, HotListEntryUpdate
-from app.routers.routes import (
-    StopCreate,
-    RouteCreate,
-    _route_to_response,
-    _get_stop_by_index,
-)
-
 
 # ── Concurrent schema validation ────────────────────────────────────────────
 
@@ -47,6 +45,7 @@ def test_concurrent_detection_creation():
 
 def test_concurrent_hotlist_entry_creation():
     """Validate 200 HotListEntryCreate schemas in parallel threads."""
+
     def _create_entry(i):
         return HotListEntryCreate(
             plate_text=f"HOT{i:05d}",
@@ -92,7 +91,7 @@ def _make_route_with_n_stops(n: int):
         status="active",
         current_stop_index=0,
         total_stops=n,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
         completed_at=None,
         stops=[_make_stop(route_id, i) for i in range(n)],
     )
@@ -113,7 +112,7 @@ def test_large_route_serialization():
 def test_route_stop_lifecycle_all_completed():
     """Walk all stops through pending → arrived → scanning → completed."""
     route = _make_route_with_n_stops(50)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     for i in range(50):
         stop = _get_stop_by_index(route, i)
@@ -138,7 +137,7 @@ def test_route_stop_lifecycle_all_completed():
 def test_route_stop_lifecycle_mixed_skip_complete():
     """Mix of completed and skipped stops should all count as done."""
     route = _make_route_with_n_stops(20)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     for i in range(20):
         stop = _get_stop_by_index(route, i)
@@ -206,7 +205,7 @@ def test_hotlist_entry_update_all_fields_simultaneously():
         is_active=False,
         priority="urgent",
         notes="Updated all fields",
-        expires_at=datetime(2027, 1, 1, tzinfo=timezone.utc),
+        expires_at=datetime(2027, 1, 1, tzinfo=UTC),
         extra={"batch": True},
     )
     dumped = u.model_dump(exclude_unset=True)

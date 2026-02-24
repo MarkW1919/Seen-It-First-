@@ -4,12 +4,10 @@ The AI module has heavy Jetson/CV2 dependencies that aren't available in the
 backend test environment. We replicate the pure-logic components here to get
 coverage without importing the full pipeline.
 """
-import time
+
 import os
 import tempfile
-
-import pytest
-
+import time
 
 # ── Replicated ThermalMonitor (pure logic, no cv2/numpy deps) ────────────────
 
@@ -20,7 +18,7 @@ class ThermalMonitor:
     WARM_TEMP = 70.0
     THROTTLE_TEMP = 80.0
     RESUME_TEMP = 65.0
-    THERMAL_ZONES = [
+    THERMAL_ZONES: list[str] = [  # noqa: RUF012
         "/sys/devices/virtual/thermal/thermal_zone0/temp",
         "/sys/devices/virtual/thermal/thermal_zone1/temp",
     ]
@@ -42,7 +40,6 @@ class ThermalMonitor:
             return self._throttle_level
         self._last_temp = temp
 
-        old_level = self._throttle_level
         if temp >= self.THROTTLE_TEMP:
             self._throttle_level = 2
         elif temp >= self.WARM_TEMP:
@@ -76,9 +73,7 @@ class ThermalMonitor:
 # ── Replicated _find_track_id (pure logic, no imports needed) ────────────────
 
 
-def _find_track_id(
-    det_bbox: list[int], track_by_bbox: dict[tuple, int]
-) -> int | None:
+def _find_track_id(det_bbox: list[int], track_by_bbox: dict[tuple, int]) -> int | None:
     """Replica of InferencePipeline._find_track_id for testing."""
     if not track_by_bbox:
         return None
@@ -195,8 +190,10 @@ class TestThermalMonitor:
 
     def test_max_temp_across_zones(self):
         tm = ThermalMonitor()
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f1, \
-             tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f2:
+        with (
+            tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f1,
+            tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f2,
+        ):
             f1.write("55000\n")
             f2.write("72000\n")
             f1.flush()

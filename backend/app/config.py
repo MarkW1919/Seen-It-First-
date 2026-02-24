@@ -1,7 +1,6 @@
-import os
+from functools import lru_cache
 
 from pydantic_settings import BaseSettings
-from functools import lru_cache
 
 
 def _require_env(var: str) -> str:
@@ -93,8 +92,7 @@ def get_settings() -> Settings:
     # Fail-fast: refuse to start with missing critical secrets
     if not settings.secret_key:
         raise RuntimeError(
-            "SECRET_KEY environment variable is required. "
-            "Generate one with: openssl rand -hex 64"
+            "SECRET_KEY environment variable is required. Generate one with: openssl rand -hex 64"
         )
     if not settings.postgres_password:
         raise RuntimeError(

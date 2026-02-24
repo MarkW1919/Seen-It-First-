@@ -1,16 +1,16 @@
 """Unit tests for Pydantic hotlist schemas — creation, update, response, import."""
+
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from app.schemas.hotlist import (
-    HotListEntryCreate,
-    HotListEntryUpdate,
-    HotListEntryResponse,
     HotListAlertResponse,
     HotListAlertUpdate,
+    HotListEntryCreate,
+    HotListEntryResponse,
+    HotListEntryUpdate,
     HotListImport,
 )
-
 
 # ── HotListEntryCreate ──────────────────────────────────────────────────────
 
@@ -42,7 +42,7 @@ def test_entry_create_all_fields():
         debtor_phone="555-5678",
         priority="high",
         notes="Last seen downtown",
-        expires_at=datetime(2026, 12, 31, tzinfo=timezone.utc),
+        expires_at=datetime(2026, 12, 31, tzinfo=UTC),
         extra={"source": "csv_import"},
     )
     assert e.vehicle_make == "Honda"
@@ -72,7 +72,7 @@ def test_entry_update_multiple_fields():
 
 
 def test_entry_response_fields():
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     r = HotListEntryResponse(
         id=uuid.uuid4(),
         plate_text="ABC1234",
@@ -102,7 +102,7 @@ def test_entry_response_fields():
 
 
 def test_alert_response_fields():
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     ar = HotListAlertResponse(
         id=uuid.uuid4(),
         hotlist_entry_id=uuid.uuid4(),
@@ -123,7 +123,7 @@ def test_alert_response_fields():
 
 
 def test_alert_response_with_entry():
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     entry = HotListEntryResponse(
         id=uuid.uuid4(),
         plate_text="ABC1234",

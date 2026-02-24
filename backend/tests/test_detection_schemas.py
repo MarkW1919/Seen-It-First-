@@ -1,15 +1,15 @@
 """Unit tests for Pydantic detection and plate-read schemas — validation, defaults."""
+
 import uuid
 from datetime import datetime
 
 from app.schemas.detection import (
+    DetectionCreate,
+    DetectionList,
+    DetectionResponse,
     PlateReadCreate,
     PlateReadResponse,
-    DetectionCreate,
-    DetectionResponse,
-    DetectionList,
 )
-
 
 # ── PlateReadCreate ──────────────────────────────────────────────────────────
 

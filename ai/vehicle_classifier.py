@@ -10,6 +10,7 @@ Fixes applied:
 - Year label parsing error handling
 - Classification caching per track ID for stability
 """
+
 import json
 import logging
 import time
@@ -24,8 +25,20 @@ logger = logging.getLogger(__name__)
 
 # Common vehicle colors (fallback if no label file provided)
 COLORS = [
-    "black", "white", "silver", "gray", "red", "blue", "brown",
-    "green", "beige", "gold", "orange", "yellow", "purple", "maroon",
+    "black",
+    "white",
+    "silver",
+    "gray",
+    "red",
+    "blue",
+    "brown",
+    "green",
+    "beige",
+    "gold",
+    "orange",
+    "yellow",
+    "purple",
+    "maroon",
 ]
 
 
@@ -43,7 +56,7 @@ def _load_labels(path: str | None) -> list[str]:
     try:
         with open(path) as f:
             labels = json.load(f)
-        if isinstance(labels, list) and all(isinstance(l, str) for l in labels):
+        if isinstance(labels, list) and all(isinstance(lbl, str) for lbl in labels):
             logger.info("Loaded %d labels from %s", len(labels), path)
             return labels
         logger.warning("Label file %s does not contain a list of strings", path)
@@ -147,14 +160,16 @@ class VehicleClassifier:
         head_names = ["make", "model", "year", "color"]
         label_lists = [self.make_labels, self.model_labels, self.year_labels, self.color_labels]
 
-        for i, (name, labels) in enumerate(zip(head_names, label_lists)):
+        for i, (name, labels) in enumerate(zip(head_names, label_lists, strict=False)):
             if i < len(outputs) and labels:
                 out_size = outputs[i].squeeze().shape[0] if outputs[i].squeeze().ndim > 0 else 1
                 if len(labels) != out_size:
                     logger.warning(
                         "Label count mismatch for %s head: model outputs %d classes "
                         "but label file has %d entries",
-                        name, out_size, len(labels),
+                        name,
+                        out_size,
+                        len(labels),
                     )
 
     def preprocess(self, vehicle_img: np.ndarray) -> np.ndarray:
@@ -174,10 +189,10 @@ class VehicleClassifier:
             side = min(h, w)
             y_start = (h - side) // 2
             x_start = (w - side) // 2
-            rgb = rgb[y_start:y_start + side, x_start:x_start + side]
+            rgb = rgb[y_start : y_start + side, x_start : x_start + side]
 
         # Resize to model input — INTER_AREA for downsizing, INTER_LINEAR for upsizing
-        current_h, current_w = rgb.shape[:2]
+        current_h, _current_w = rgb.shape[:2]
         interp = cv2.INTER_AREA if current_h > self.input_h else cv2.INTER_LINEAR
         resized = cv2.resize(rgb, (self.input_w, self.input_h), interpolation=interp)
 
@@ -249,7 +264,9 @@ class VehicleClassifier:
                 try:
                     result["year"] = int(self.year_labels[idx])
                 except (ValueError, TypeError):
-                    logger.debug("Non-integer year label at index %d: %s", idx, self.year_labels[idx])
+                    logger.debug(
+                        "Non-integer year label at index %d: %s", idx, self.year_labels[idx]
+                    )
 
         # Color classification (with confidence threshold — was missing)
         if len(outputs) >= 4:
@@ -281,13 +298,14 @@ class VehicleClassifier:
             splits = []
             offset = 0
             for s in sizes:
-                splits.append(flat[offset:offset + s])
+                splits.append(flat[offset : offset + s])
                 offset += s
             return splits
 
         logger.debug(
             "Cannot split concatenated output (size=%d) by label sizes %s",
-            flat.shape[0], sizes,
+            flat.shape[0],
+            sizes,
         )
         return [flat]
 

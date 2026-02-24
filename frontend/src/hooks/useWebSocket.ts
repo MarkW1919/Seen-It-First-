@@ -27,6 +27,7 @@ export function useWebSocket() {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectAttempt = useRef(0);
   const reconnectTimer = useRef<number>();
+  const connectRef = useRef<() => void>();
   const token = useAppStore((s) => s.token);
   const addAlert = useAppStore((s) => s.addAlert);
   const alertSoundEnabled = useAppStore((s) => s.alertSoundEnabled);
@@ -162,7 +163,7 @@ export function useWebSocket() {
         ];
       reconnectTimer.current = window.setTimeout(() => {
         reconnectAttempt.current++;
-        connect();
+        connectRef.current?.();
       }, delay);
     };
 
@@ -170,6 +171,11 @@ export function useWebSocket() {
       ws.close();
     };
   }, [token, addAlert, playAlertSound, vibrateAlert]);
+
+  // Keep connectRef in sync with the latest connect callback
+  useEffect(() => {
+    connectRef.current = connect;
+  }, [connect]);
 
   useEffect(() => {
     // Request notification permission

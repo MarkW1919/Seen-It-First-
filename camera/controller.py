@@ -5,6 +5,7 @@ Performance optimizations:
 - Cached PTZ position (avoid dict copy per frame)
 - Pre-allocated JPEG encode params
 """
+
 import asyncio
 import base64
 import json
@@ -16,12 +17,12 @@ import cv2
 import numpy as np
 import yaml
 
+from camera.calibration import CameraCalibration
 from camera.capture import VideoCapture
-from camera.ptz import PTZController
 from camera.night_vision import NightVisionController
 from camera.preprocessor import ImagePreprocessor
+from camera.ptz import PTZController
 from camera.rtsp_server import RTSPServer
-from camera.calibration import CameraCalibration
 
 logger = logging.getLogger(__name__)
 
@@ -203,13 +204,15 @@ async def main():
                 _, buffer = cv2.imencode(".jpg", frame, jpeg_params)
                 frame_b64 = base64.b64encode(buffer.tobytes()).decode("ascii")
 
-                frame_data = json.dumps({
-                    "frame": frame_b64,
-                    "timestamp": ts_frame.wall_time,
-                    "sequence": ts_frame.sequence,
-                    "fps_actual": round(ts_frame.fps_actual, 1),
-                    "ptz_position": controller.ptz.position,
-                })
+                frame_data = json.dumps(
+                    {
+                        "frame": frame_b64,
+                        "timestamp": ts_frame.wall_time,
+                        "sequence": ts_frame.sequence,
+                        "fps_actual": round(ts_frame.fps_actual, 1),
+                        "ptz_position": controller.ptz.position,
+                    }
+                )
 
                 await redis_client.publish("reposcan:frames", frame_data)
                 frames_sent += 1
@@ -230,7 +233,9 @@ async def main():
                 actual = frames_sent / (mono_now - last_fps_log)
                 logger.info(
                     "Camera publish rate: %.1f FPS (%d frames in %.0fs)",
-                    actual, frames_sent, mono_now - last_fps_log,
+                    actual,
+                    frames_sent,
+                    mono_now - last_fps_log,
                 )
                 frames_sent = 0
                 last_fps_log = mono_now

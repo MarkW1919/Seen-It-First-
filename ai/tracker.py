@@ -5,6 +5,7 @@ Performance optimizations:
 - Pre-allocated Kalman matrices (F, Q, H, R reused across predict/update calls)
 - Bounded detection history with deque (O(1) append + trim vs list slice)
 """
+
 import logging
 from collections import deque
 from dataclasses import dataclass, field
@@ -64,10 +65,10 @@ class KalmanState:
         cy = y + h / 2
         aspect = w / max(h, 1)
         z = np.array([cx, cy, aspect, h])
-        S = _H @ self.covariance @ _H.T + _R
-        K = self.covariance @ _H.T @ np.linalg.inv(S)
-        self.mean = self.mean + K @ (z - _H @ self.mean)
-        self.covariance = (_I8 - K @ _H) @ self.covariance
+        innovation_cov = _H @ self.covariance @ _H.T + _R
+        kalman_gain = self.covariance @ _H.T @ np.linalg.inv(innovation_cov)
+        self.mean = self.mean + kalman_gain @ (z - _H @ self.mean)
+        self.covariance = (_I8 - kalman_gain @ _H) @ self.covariance
 
 
 @dataclass
@@ -121,7 +122,7 @@ class MultiObjectTracker:
             matched_tracks = set()
             matched_dets = set()
 
-            for r, c in zip(row_indices, col_indices):
+            for r, c in zip(row_indices, col_indices, strict=False):
                 if cost_matrix[r, c] < (1 - self.iou_threshold):
                     self.tracks[r].state.update(detections[c]["bbox"])
                     self.tracks[r].hits += 1
@@ -154,9 +155,7 @@ class MultiObjectTracker:
                 self.tracks.append(track)
 
         # Remove dead tracks
-        self.tracks = [
-            t for t in self.tracks if t.time_since_update < self.max_age
-        ]
+        self.tracks = [t for t in self.tracks if t.time_since_update < self.max_age]
 
         # Return confirmed tracks
         return [t for t in self.tracks if t.is_confirmed]
@@ -171,7 +170,7 @@ class MultiObjectTracker:
         O(n*m) Python loop iterations. ~10x faster for >5 vehicles.
         """
         t = np.array(track_bboxes, dtype=np.float32)  # (N, 4) [x, y, w, h]
-        d = np.array(det_bboxes, dtype=np.float32)     # (M, 4)
+        d = np.array(det_bboxes, dtype=np.float32)  # (M, 4)
 
         # Convert to [x1, y1, x2, y2]
         t_x2 = t[:, 0] + t[:, 2]

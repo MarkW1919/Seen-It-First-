@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -9,8 +9,8 @@ from sqlalchemy.orm import selectinload
 
 from app.database import get_db
 from app.models.route import Route, RouteStop
-from app.routers.auth import get_current_user
 from app.models.user import User
+from app.routers.auth import get_current_user
 
 router = APIRouter(prefix="/api/routes", tags=["routes"])
 
@@ -164,7 +164,7 @@ async def mark_arrival(
         raise HTTPException(400, f"Stop is already {stop.status}")
 
     stop.status = "arrived"
-    stop.arrived_at = datetime.now(timezone.utc)
+    stop.arrived_at = datetime.now(UTC)
     route.current_stop_index = stop_index
     await db.commit()
     return {"status": "arrived", "stop_index": stop_index}
@@ -181,12 +181,10 @@ async def start_scan_at_stop(
     stop = _get_stop_by_index(route, stop_index)
 
     if stop.status not in ("arrived", "scanning"):
-        raise HTTPException(
-            400, f"Must arrive before scanning (current: {stop.status})"
-        )
+        raise HTTPException(400, f"Must arrive before scanning (current: {stop.status})")
 
     stop.status = "scanning"
-    stop.scan_started_at = datetime.now(timezone.utc)
+    stop.scan_started_at = datetime.now(UTC)
     await db.commit()
     return {"status": "scanning", "stop_index": stop_index}
 
@@ -203,7 +201,7 @@ async def complete_stop(
     stop = _get_stop_by_index(route, stop_index)
 
     stop.status = "completed"
-    stop.completed_at = datetime.now(timezone.utc)
+    stop.completed_at = datetime.now(UTC)
     if body:
         if body.plates_found is not None:
             stop.plates_found = body.plates_found
@@ -223,7 +221,7 @@ async def complete_stop(
         all_done = all(s.status in ("completed", "skipped") for s in route.stops)
         if all_done:
             route.status = "completed"
-            route.completed_at = datetime.now(timezone.utc)
+            route.completed_at = datetime.now(UTC)
 
     await db.commit()
     return {
@@ -245,7 +243,7 @@ async def skip_stop(
     stop = _get_stop_by_index(route, stop_index)
 
     stop.status = "skipped"
-    stop.completed_at = datetime.now(timezone.utc)
+    stop.completed_at = datetime.now(UTC)
 
     next_stop = None
     for s in route.stops:
@@ -277,9 +275,7 @@ async def delete_route(
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
-async def _get_route_or_404(
-    route_id: str, agent_id: uuid.UUID, db: AsyncSession
-) -> Route:
+async def _get_route_or_404(route_id: str, agent_id: uuid.UUID, db: AsyncSession) -> Route:
     stmt = (
         select(Route)
         .where(Route.id == uuid.UUID(route_id), Route.agent_id == agent_id)
@@ -318,9 +314,7 @@ def _route_to_response(route: Route) -> RouteResponse:
                 geofence_radius_m=s.geofence_radius_m,
                 status=s.status,
                 arrived_at=s.arrived_at.isoformat() if s.arrived_at else None,
-                scan_started_at=(
-                    s.scan_started_at.isoformat() if s.scan_started_at else None
-                ),
+                scan_started_at=(s.scan_started_at.isoformat() if s.scan_started_at else None),
                 completed_at=s.completed_at.isoformat() if s.completed_at else None,
                 plates_found=s.plates_found or 0,
                 notes=s.notes,

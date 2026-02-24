@@ -1,7 +1,7 @@
 """RTSP streaming server using GStreamer."""
+
 import logging
 import subprocess
-import threading
 
 logger = logging.getLogger(__name__)
 
@@ -71,8 +71,7 @@ class RTSPServer:
             logger.info(f"RTSP server started at rtsp://0.0.0.0:{self.port}{self.path}")
         except FileNotFoundError:
             logger.warning(
-                "gst-rtsp-launch not found. "
-                "Install gstreamer1.0-rtsp or use GstRtspServer API."
+                "gst-rtsp-launch not found. Install gstreamer1.0-rtsp or use GstRtspServer API."
             )
 
     @property

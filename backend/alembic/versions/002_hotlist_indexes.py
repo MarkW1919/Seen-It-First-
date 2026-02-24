@@ -4,6 +4,7 @@ Revision ID: 002_hotlist_indexes
 Revises: 001_initial
 Create Date: 2026-02-19
 """
+
 from alembic import op
 
 # revision identifiers

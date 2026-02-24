@@ -1,4 +1,5 @@
 """Camera calibration and lens distortion correction."""
+
 import json
 import logging
 from pathlib import Path
@@ -56,9 +57,7 @@ class CameraCalibration:
             ret, corners = cv2.findChessboardCorners(gray, board_size, None)
 
             if ret:
-                corners_refined = cv2.cornerSubPix(
-                    gray, corners, (11, 11), (-1, -1), criteria
-                )
+                corners_refined = cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1), criteria)
                 obj_points.append(objp)
                 img_points.append(corners_refined)
 
@@ -67,7 +66,7 @@ class CameraCalibration:
             return False
 
         h, w = images[0].shape[:2]
-        ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(
+        ret, mtx, dist, _rvecs, _tvecs = cv2.calibrateCamera(
             obj_points, img_points, (w, h), None, None
         )
 

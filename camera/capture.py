@@ -6,6 +6,7 @@ Optimized for sustained 25-30 FPS with:
 - Double-buffered atomic swap (eliminates per-read frame.copy())
 - Backoff on capture failure prevents busy-wait
 """
+
 import logging
 import threading
 import time
@@ -20,11 +21,12 @@ logger = logging.getLogger(__name__)
 @dataclass
 class TimestampedFrame:
     """Frame with capture-time metadata for pipeline synchronization."""
+
     frame: np.ndarray
-    timestamp: float        # monotonic capture time (seconds)
-    wall_time: float        # wall-clock time (epoch seconds)
-    sequence: int           # monotonically increasing frame counter
-    fps_actual: float       # measured capture FPS
+    timestamp: float  # monotonic capture time (seconds)
+    wall_time: float  # wall-clock time (epoch seconds)
+    sequence: int  # monotonically increasing frame counter
+    fps_actual: float  # measured capture FPS
 
 
 class VideoCapture:
@@ -80,8 +82,8 @@ class VideoCapture:
                 "pipeline_optimized",
                 f"nvarguscamerasrc sensor-id={self.source} "
                 f"sensor-mode={sensor_mode} "
-                f"exposuretimerange=\"{int(exp_lo * 1e9)} {int(exp_hi * 1e9)}\" "
-                f"gainrange=\"{gain_lo} {gain_hi}\" "
+                f'exposuretimerange="{int(exp_lo * 1e9)} {int(exp_hi * 1e9)}" '
+                f'gainrange="{gain_lo} {gain_hi}" '
                 f"wbmode={wb_mode} aelock={ae_lock} "
                 f"! video/x-raw(memory:NVMM),width={self.width},height={self.height},"
                 f"framerate={self.fps}/1,format=NV12 "
@@ -141,10 +143,7 @@ class VideoCapture:
         )
         self._thread.start()
 
-        logger.info(
-            f"Camera started: {self.width}x{self.height} @ {self.fps}fps "
-            f"({self.cam_type})"
-        )
+        logger.info(f"Camera started: {self.width}x{self.height} @ {self.fps}fps ({self.cam_type})")
         return True
 
     def _capture_loop(self):

@@ -6,6 +6,7 @@ Performance optimizations:
 - Downsampled blur detection (half-res Laplacian)
 - Skips perspective correction on already-frontal plates
 """
+
 import logging
 
 import cv2
@@ -96,8 +97,8 @@ def perspective_correct(plate_img: np.ndarray) -> np.ndarray:
                 [[0, 0], [out_w - 1, 0], [out_w - 1, out_h - 1], [0, out_h - 1]],
                 dtype=np.float32,
             )
-            M = cv2.getPerspectiveTransform(pts, dst)
-            warped = cv2.warpPerspective(plate_img, M, (out_w, out_h))
+            transform_matrix = cv2.getPerspectiveTransform(pts, dst)
+            warped = cv2.warpPerspective(plate_img, transform_matrix, (out_w, out_h))
             return warped
 
     return plate_img
@@ -187,7 +188,7 @@ class PlateDetector:
         self._blob[0, 0] = self._padded[:, :, 0]
         self._blob[0, 1] = self._padded[:, :, 1]
         self._blob[0, 2] = self._padded[:, :, 2]
-        self._blob *= (1.0 / 255.0)
+        self._blob *= 1.0 / 255.0
 
         return self._blob, scale, (pad_w, pad_h)
 
@@ -313,7 +314,11 @@ class PlateDetector:
 
         # Motion blur detection and mitigation
         if self.do_blur_mitigation:
-            gray_check = cv2.cvtColor(plate_img, cv2.COLOR_BGR2GRAY) if len(plate_img.shape) == 3 else plate_img
+            gray_check = (
+                cv2.cvtColor(plate_img, cv2.COLOR_BGR2GRAY)
+                if len(plate_img.shape) == 3
+                else plate_img
+            )
             if detect_motion_blur(gray_check):
                 plate_img = mitigate_motion_blur(plate_img)
 

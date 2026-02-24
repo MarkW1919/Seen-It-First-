@@ -7,21 +7,21 @@ from app.database import get_db
 from app.middleware.auth import get_current_user
 from app.models.user import User
 from app.schemas.hotlist import (
-    HotListEntryCreate,
-    HotListEntryUpdate,
-    HotListEntryResponse,
     HotListAlertResponse,
     HotListAlertUpdate,
+    HotListEntryCreate,
+    HotListEntryResponse,
+    HotListEntryUpdate,
     HotListImport,
 )
 from app.services.hotlist_service import (
     create_entry,
-    update_entry,
-    get_entry,
-    list_entries,
     delete_entry,
+    get_entry,
     list_alerts,
+    list_entries,
     update_alert,
+    update_entry,
 )
 
 router = APIRouter(prefix="/api/hotlist", tags=["hotlist"])
@@ -52,11 +52,11 @@ async def import_hotlist_entries(
     Commits every 100 entries so large imports don't accumulate thousands of
     unflushed objects in memory or hold locks for extended periods.
     """
-    BATCH_SIZE = 100
+    batch_size = 100
     total_imported = 0
 
-    for i in range(0, len(data.entries), BATCH_SIZE):
-        batch = data.entries[i : i + BATCH_SIZE]
+    for i in range(0, len(data.entries), batch_size):
+        batch = data.entries[i : i + batch_size]
         for entry_data in batch:
             await create_entry(db, entry_data)
         await db.commit()

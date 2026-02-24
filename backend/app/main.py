@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import logging
 from contextlib import asynccontextmanager
 
@@ -11,7 +12,7 @@ from app.database import async_session, init_db
 from app.routers import auth, camera, detections, hotlist, plates, routes, search, system
 from app.services.alert_service import alert_service
 from app.services.hotlist_service import hotlist_cache
-from app.websocket.handler import websocket_endpoint, redis_listener
+from app.websocket.handler import redis_listener, websocket_endpoint
 
 settings = get_settings()
 logger = logging.getLogger("reposcan")
@@ -36,10 +37,8 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     listener_task.cancel()
-    try:
+    with contextlib.suppress(asyncio.CancelledError):
         await listener_task
-    except asyncio.CancelledError:
-        pass
     await hotlist_cache.disconnect()
     await alert_service.disconnect()
     logger.info("RepoScan Pro backend stopped.")

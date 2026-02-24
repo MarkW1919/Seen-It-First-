@@ -3,16 +3,16 @@
 import asyncio
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import redis.asyncio as redis
-from sqlalchemy import select, func, and_
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.config import get_settings
-from app.models.hotlist import HotListEntry, HotListAlert
-from app.schemas.hotlist import HotListEntryCreate, HotListEntryUpdate, HotListAlertUpdate
+from app.models.hotlist import HotListAlert, HotListEntry
+from app.schemas.hotlist import HotListAlertUpdate, HotListEntryCreate, HotListEntryUpdate
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -45,7 +45,7 @@ class HotlistCache:
 
     async def load_from_db(self, db: AsyncSession) -> None:
         """Bulk-load all active, non-expired plate texts into the Redis set."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         result = await db.execute(
             select(HotListEntry.plate_text).where(
                 and_(
@@ -88,7 +88,9 @@ class HotlistCache:
         key = f"{COOLDOWN_PREFIX}{hotlist_entry_id}"
         return bool(await self._redis.exists(key))
 
-    async def set_cooldown(self, hotlist_entry_id: uuid.UUID, seconds: int = DEFAULT_COOLDOWN_SECONDS) -> None:
+    async def set_cooldown(
+        self, hotlist_entry_id: uuid.UUID, seconds: int = DEFAULT_COOLDOWN_SECONDS
+    ) -> None:
         """Set a cooldown TTL key to suppress duplicate alerts."""
         if self._redis:
             key = f"{COOLDOWN_PREFIX}{hotlist_entry_id}"
@@ -96,7 +98,9 @@ class HotlistCache:
 
     # ─── Deduplication lock ───
 
-    async def acquire_alert_lock(self, hotlist_entry_id: uuid.UUID, detection_id: uuid.UUID) -> bool:
+    async def acquire_alert_lock(
+        self, hotlist_entry_id: uuid.UUID, detection_id: uuid.UUID
+    ) -> bool:
         """Atomic lock to prevent duplicate alert creation under concurrent requests.
 
         Returns True if lock was acquired (caller should proceed), False if another
@@ -237,9 +241,7 @@ async def delete_entry(db: AsyncSession, entry_id: uuid.UUID) -> bool:
 # ─── Plate Matching (O(1) fast path + DB verification) ───
 
 
-async def check_plate_against_hotlist(
-    db: AsyncSession, plate_text: str
-) -> list[HotListEntry]:
+async def check_plate_against_hotlist(db: AsyncSession, plate_text: str) -> list[HotListEntry]:
     """Two-tier lookup: O(1) Redis cache check, then DB verification only on hit."""
     plate_upper = plate_text.upper().strip()
 
@@ -248,7 +250,7 @@ async def check_plate_against_hotlist(
         return []
 
     # Cache hit — verify against DB (handles expiration edge cases)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     result = await db.execute(
         select(HotListEntry).where(
             and_(
@@ -289,7 +291,8 @@ async def create_alert(
     if await hotlist_cache.check_cooldown(hotlist_entry_id):
         logger.debug(
             "Alert suppressed by cooldown: entry=%s plate=%s",
-            hotlist_entry_id, plate_text,
+            hotlist_entry_id,
+            plate_text,
         )
         return None
 
@@ -297,7 +300,8 @@ async def create_alert(
     if detection_id and not await hotlist_cache.acquire_alert_lock(hotlist_entry_id, detection_id):
         logger.debug(
             "Alert suppressed by dedup lock: entry=%s detection=%s",
-            hotlist_entry_id, detection_id,
+            hotlist_entry_id,
+            detection_id,
         )
         return None
 
@@ -358,9 +362,9 @@ async def update_alert(
     if data.status:
         alert.status = data.status
         if data.status == "acknowledged":
-            alert.acknowledged_at = datetime.now(timezone.utc)
+            alert.acknowledged_at = datetime.now(UTC)
         elif data.status in ("resolved", "false_positive"):
-            alert.resolved_at = datetime.now(timezone.utc)
+            alert.resolved_at = datetime.now(UTC)
     if data.notes is not None:
         alert.notes = data.notes
 

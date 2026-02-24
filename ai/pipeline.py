@@ -11,26 +11,28 @@ Optimized for sustained 25-30 FPS on Jetson Orin Nano Super:
 - Reduced per-frame object churn (cached day_dir, JPEG params)
 - Base64 frame transport (33% smaller than hex encoding)
 """
+
 import asyncio
 import base64
+import contextlib
 import json
 import logging
 import os
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import cv2
+import httpx
 import numpy as np
 import yaml
-import httpx
 
-from ai.vehicle_detector import VehicleDetector
 from ai.plate_detector import PlateDetector
 from ai.plate_ocr import PlateOCR
-from ai.vehicle_classifier import VehicleClassifier
 from ai.tracker import MultiObjectTracker
+from ai.vehicle_classifier import VehicleClassifier
+from ai.vehicle_detector import VehicleDetector
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +52,7 @@ class ThermalMonitor:
     WARM_TEMP = 70.0
     THROTTLE_TEMP = 80.0
     RESUME_TEMP = 65.0
-    THERMAL_ZONES = [
+    THERMAL_ZONES: list[str] = [  # noqa: RUF012
         "/sys/devices/virtual/thermal/thermal_zone0/temp",
         "/sys/devices/virtual/thermal/thermal_zone1/temp",
     ]
@@ -83,9 +85,7 @@ class ThermalMonitor:
 
         if self._throttle_level != old_level:
             labels = ["normal", "warm", "hot"]
-            logger.warning(
-                f"Thermal zone: {labels[self._throttle_level]} ({temp:.1f}C)"
-            )
+            logger.warning(f"Thermal zone: {labels[self._throttle_level]} ({temp:.1f}C)")
         return self._throttle_level
 
     @property
@@ -124,7 +124,7 @@ class InferencePipeline:
             logger.error(f"Invalid YAML in {config_path}: {e}")
             raise
 
-        precision = self.config.get("precision", "fp16")
+        _precision = self.config.get("precision", "fp16")
 
         pipeline_cfg = self.config.get("pipeline", {})
         self.max_fps = pipeline_cfg.get("max_fps", 30)
@@ -134,9 +134,7 @@ class InferencePipeline:
             os.environ.get("CAPTURE_DIR", pipeline_cfg.get("capture_dir", "/data/captures"))
         )
         self.thumbnail_size = tuple(pipeline_cfg.get("thumbnail_size", [320, 240]))
-        self.api_endpoint = pipeline_cfg.get(
-            "api_endpoint", "http://backend:8000/api/detections/"
-        )
+        self.api_endpoint = pipeline_cfg.get("api_endpoint", "http://backend:8000/api/detections/")
 
         self.capture_dir.mkdir(parents=True, exist_ok=True)
 
@@ -270,7 +268,7 @@ class InferencePipeline:
                 "heading": heading,
                 "speed": speed,
                 "plate_reads": [],
-                "timestamp": datetime.fromtimestamp(frame_ts, tz=timezone.utc).isoformat(),
+                "timestamp": datetime.fromtimestamp(frame_ts, tz=UTC).isoformat(),
             }
 
             # 3a. Detect plates first (higher priority than classification)
@@ -317,9 +315,7 @@ class InferencePipeline:
                     result["plate_reads"].append(plate_read)
 
             # 3c. Classify vehicle (after plates — lower priority, uses track cache)
-            classification = self.vehicle_classifier.classify(
-                vehicle_img, track_id=det_track_id
-            )
+            classification = self.vehicle_classifier.classify(vehicle_img, track_id=det_track_id)
             if classification:
                 result["vehicle_make"] = classification.get("make")
                 result["vehicle_model"] = classification.get("model")
@@ -403,18 +399,14 @@ class InferencePipeline:
             if self._api_token:
                 headers["Authorization"] = f"Bearer {self._api_token}"
 
-            await self._http_client.post(
-                self.api_endpoint, json=payload, headers=headers
-            )
+            await self._http_client.post(self.api_endpoint, json=payload, headers=headers)
         except httpx.RequestError as e:
             logger.warning(f"Failed to send detection to API: {e}")
         except Exception as e:
             logger.warning(f"Unexpected dispatch error: {e}")
 
     @staticmethod
-    def _find_track_id(
-        det_bbox: list[int], track_by_bbox: dict[tuple, int]
-    ) -> int | None:
+    def _find_track_id(det_bbox: list[int], track_by_bbox: dict[tuple, int]) -> int | None:
         """Find the track ID whose bbox best matches a detection bbox.
 
         Uses IoU matching to associate detections with confirmed tracks.
@@ -465,9 +457,7 @@ class InferencePipeline:
             self._cached_plate_dir.mkdir(parents=True, exist_ok=True)
         return self._cached_day_dir
 
-    def _save_capture(
-        self, frame: np.ndarray, bbox: list[int]
-    ) -> tuple[str, str]:
+    def _save_capture(self, frame: np.ndarray, bbox: list[int]) -> tuple[str, str]:
         ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         day_dir = self._get_day_dir()
 
@@ -502,10 +492,8 @@ class InferencePipeline:
     async def cleanup(self):
         if self._dispatcher_task:
             self._dispatcher_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._dispatcher_task
-            except asyncio.CancelledError:
-                pass
         await self._http_client.aclose()
 
         # Release GPU resources

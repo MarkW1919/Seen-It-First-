@@ -3,16 +3,16 @@ from datetime import datetime
 
 from geoalchemy2 import Geometry
 from sqlalchemy import (
-    Index,
-    String,
-    Float,
-    Integer,
     DateTime,
+    Float,
     ForeignKey,
+    Index,
+    Integer,
+    String,
     Text,
     func,
 )
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -27,9 +27,7 @@ class Detection(Base):
         Index("ix_detections_session_created", "session_id", "created_at"),
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     agent_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True
     )
@@ -58,9 +56,7 @@ class Detection(Base):
     # Location
     latitude: Mapped[float] = mapped_column(Float, nullable=True)
     longitude: Mapped[float] = mapped_column(Float, nullable=True)
-    location: Mapped[str] = mapped_column(
-        Geometry("POINT", srid=4326), nullable=True
-    )
+    location: Mapped[str] = mapped_column(Geometry("POINT", srid=4326), nullable=True)
     address: Mapped[str] = mapped_column(Text, nullable=True)
     heading: Mapped[float] = mapped_column(Float, nullable=True)
     speed: Mapped[float] = mapped_column(Float, nullable=True)
@@ -86,9 +82,7 @@ class PlateRead(Base):
         Index("ix_plate_reads_text_detection", "plate_text", "detection_id"),
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     detection_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("detections.id", ondelete="CASCADE"), index=True
     )
@@ -112,9 +106,7 @@ class PlateRead(Base):
     raw_ocr: Mapped[str] = mapped_column(String(30), nullable=True)
     ocr_alternatives: Mapped[dict] = mapped_column(JSONB, default=dict)
 
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships
     detection = relationship("Detection", back_populates="plate_reads")

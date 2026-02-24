@@ -1,12 +1,10 @@
 """Unit tests for SQLAlchemy model definitions — schema coverage."""
-import uuid
 
-from app.models.user import User
 from app.models.detection import Detection, PlateRead
-from app.models.hotlist import HotListEntry, HotListAlert
-from app.models.scan_session import ScanSession
+from app.models.hotlist import HotListAlert, HotListEntry
 from app.models.route import Route, RouteStop
-
+from app.models.scan_session import ScanSession
+from app.models.user import User
 
 # ── Table names ──────────────────────────────────────────────────────────────
 
@@ -49,8 +47,14 @@ def test_route_stop_model_tablename():
 def test_user_model_columns():
     columns = {c.name for c in User.__table__.columns}
     expected = {
-        "id", "email", "hashed_password", "full_name",
-        "role", "is_active", "created_at", "updated_at",
+        "id",
+        "email",
+        "hashed_password",
+        "full_name",
+        "role",
+        "is_active",
+        "created_at",
+        "updated_at",
     }
     assert expected.issubset(columns)
 
@@ -58,12 +62,29 @@ def test_user_model_columns():
 def test_detection_model_columns():
     columns = {c.name for c in Detection.__table__.columns}
     expected = {
-        "id", "agent_id", "session_id",
-        "vehicle_type", "vehicle_color", "vehicle_make", "vehicle_model", "vehicle_year",
-        "vehicle_confidence", "bbox_x", "bbox_y", "bbox_w", "bbox_h",
-        "image_path", "thumbnail_path",
-        "latitude", "longitude", "location", "address",
-        "heading", "speed", "extra", "created_at",
+        "id",
+        "agent_id",
+        "session_id",
+        "vehicle_type",
+        "vehicle_color",
+        "vehicle_make",
+        "vehicle_model",
+        "vehicle_year",
+        "vehicle_confidence",
+        "bbox_x",
+        "bbox_y",
+        "bbox_w",
+        "bbox_h",
+        "image_path",
+        "thumbnail_path",
+        "latitude",
+        "longitude",
+        "location",
+        "address",
+        "heading",
+        "speed",
+        "extra",
+        "created_at",
     }
     assert expected.issubset(columns)
 
@@ -71,9 +92,16 @@ def test_detection_model_columns():
 def test_plate_read_model_columns():
     columns = {c.name for c in PlateRead.__table__.columns}
     expected = {
-        "id", "detection_id", "plate_text", "plate_state",
-        "plate_type", "confidence", "plate_image_path",
-        "raw_ocr", "ocr_alternatives", "created_at",
+        "id",
+        "detection_id",
+        "plate_text",
+        "plate_state",
+        "plate_type",
+        "confidence",
+        "plate_image_path",
+        "raw_ocr",
+        "ocr_alternatives",
+        "created_at",
     }
     assert expected.issubset(columns)
 
@@ -81,11 +109,27 @@ def test_plate_read_model_columns():
 def test_hotlist_entry_model_columns():
     columns = {c.name for c in HotListEntry.__table__.columns}
     expected = {
-        "id", "plate_text", "plate_state", "case_number",
-        "lender_name", "order_type", "is_active", "priority",
-        "vehicle_year", "vehicle_make", "vehicle_model", "vehicle_color",
-        "vin", "debtor_name", "debtor_address", "debtor_phone",
-        "notes", "extra", "created_at", "updated_at", "expires_at",
+        "id",
+        "plate_text",
+        "plate_state",
+        "case_number",
+        "lender_name",
+        "order_type",
+        "is_active",
+        "priority",
+        "vehicle_year",
+        "vehicle_make",
+        "vehicle_model",
+        "vehicle_color",
+        "vin",
+        "debtor_name",
+        "debtor_address",
+        "debtor_phone",
+        "notes",
+        "extra",
+        "created_at",
+        "updated_at",
+        "expires_at",
     }
     assert expected.issubset(columns)
 
@@ -93,10 +137,20 @@ def test_hotlist_entry_model_columns():
 def test_hotlist_alert_model_columns():
     columns = {c.name for c in HotListAlert.__table__.columns}
     expected = {
-        "id", "hotlist_entry_id", "detection_id", "agent_id",
-        "plate_text_matched", "match_confidence",
-        "latitude", "longitude", "address",
-        "status", "acknowledged_at", "resolved_at", "notes", "created_at",
+        "id",
+        "hotlist_entry_id",
+        "detection_id",
+        "agent_id",
+        "plate_text_matched",
+        "match_confidence",
+        "latitude",
+        "longitude",
+        "address",
+        "status",
+        "acknowledged_at",
+        "resolved_at",
+        "notes",
+        "created_at",
     }
     assert expected.issubset(columns)
 
@@ -104,9 +158,14 @@ def test_hotlist_alert_model_columns():
 def test_route_model_columns():
     columns = {c.name for c in Route.__table__.columns}
     expected = {
-        "id", "agent_id", "name", "status",
-        "current_stop_index", "total_stops",
-        "created_at", "completed_at",
+        "id",
+        "agent_id",
+        "name",
+        "status",
+        "current_stop_index",
+        "total_stops",
+        "created_at",
+        "completed_at",
     }
     assert expected.issubset(columns)
 
@@ -114,10 +173,19 @@ def test_route_model_columns():
 def test_route_stop_model_columns():
     columns = {c.name for c in RouteStop.__table__.columns}
     expected = {
-        "id", "route_id", "order_index", "address",
-        "latitude", "longitude", "geofence_radius_m",
-        "status", "arrived_at", "scan_started_at", "completed_at",
-        "plates_found", "notes",
+        "id",
+        "route_id",
+        "order_index",
+        "address",
+        "latitude",
+        "longitude",
+        "geofence_radius_m",
+        "status",
+        "arrived_at",
+        "scan_started_at",
+        "completed_at",
+        "plates_found",
+        "notes",
     }
     assert expected.issubset(columns)
 
@@ -126,8 +194,16 @@ def test_route_stop_model_columns():
 
 
 def test_all_primary_keys_are_uuid():
-    for model in [User, Detection, PlateRead, HotListEntry, HotListAlert,
-                  ScanSession, Route, RouteStop]:
+    for model in [
+        User,
+        Detection,
+        PlateRead,
+        HotListEntry,
+        HotListAlert,
+        ScanSession,
+        Route,
+        RouteStop,
+    ]:
         pk_cols = [c for c in model.__table__.columns if c.primary_key]
         assert len(pk_cols) == 1, f"{model.__tablename__} should have exactly 1 PK"
 

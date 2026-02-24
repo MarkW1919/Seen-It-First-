@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.middleware.auth import get_current_user
 from app.models.user import User
-from app.schemas.detection import DetectionCreate, DetectionResponse, DetectionList
+from app.schemas.detection import DetectionCreate, DetectionList, DetectionResponse
 from app.services.alert_service import alert_service
 from app.services.detection_service import (
     create_detection,
@@ -58,25 +58,27 @@ async def create_new_detection(
             )
             # alert is None if suppressed by cooldown or dedup lock
             if alert is not None:
-                pending_alert_publishes.append({
-                    "alert_id": alert.id,
-                    "hotlist_entry_id": match.id,
-                    "plate_text": pr.plate_text,
-                    "confidence": pr.confidence,
-                    "vehicle_info": {
-                        "type": data.vehicle_type,
-                        "color": data.vehicle_color,
-                        "make": data.vehicle_make,
-                        "model": data.vehicle_model,
-                        "year": data.vehicle_year,
-                    },
-                    "location": {
-                        "lat": data.latitude,
-                        "lng": data.longitude,
-                        "address": data.address,
-                    },
-                    "image_path": data.image_path,
-                })
+                pending_alert_publishes.append(
+                    {
+                        "alert_id": alert.id,
+                        "hotlist_entry_id": match.id,
+                        "plate_text": pr.plate_text,
+                        "confidence": pr.confidence,
+                        "vehicle_info": {
+                            "type": data.vehicle_type,
+                            "color": data.vehicle_color,
+                            "make": data.vehicle_make,
+                            "model": data.vehicle_model,
+                            "year": data.vehicle_year,
+                        },
+                        "location": {
+                            "lat": data.latitude,
+                            "lng": data.longitude,
+                            "address": data.address,
+                        },
+                        "image_path": data.image_path,
+                    }
+                )
 
     # COMMIT first — ensures all DB records are visible before broadcasting
     await db.commit()

@@ -10,16 +10,17 @@ Corrected implementation addressing:
 """
 
 import asyncio
+import contextlib
 import enum
 import logging
 import struct
-import time
 
 logger = logging.getLogger(__name__)
 
 
 class MotionState(enum.Enum):
     """Current motion state — used by frame pipeline to suppress blurry captures."""
+
     IDLE = "idle"
     MOVING = "moving"
     SETTLING = "settling"  # Motor stopped, waiting for vibration to dampen
@@ -131,11 +132,10 @@ class PTZController:
     def _connect(self) -> bool:
         try:
             import serial
+
             if self._serial:
-                try:
+                with contextlib.suppress(Exception):
                     self._serial.close()
-                except Exception:
-                    pass
 
             self._serial = serial.Serial(
                 port=self.port,
@@ -164,15 +164,12 @@ class PTZController:
 
     def _send_command(self, cmd1: int, cmd2: int, data1: int = 0, data2: int = 0) -> bool:
         """Send a Pelco-D command packet. Returns True on success."""
-        if not self._serial:
-            if not self._reconnect_if_needed():
-                return False
+        if not self._serial and not self._reconnect_if_needed():
+            return False
 
         sync = 0xFF
         checksum = (self.address + cmd1 + cmd2 + data1 + data2) % 256
-        packet = struct.pack(
-            "BBBBBBB", sync, self.address, cmd1, cmd2, data1, data2, checksum
-        )
+        packet = struct.pack("BBBBBBB", sync, self.address, cmd1, cmd2, data1, data2, checksum)
 
         try:
             self._serial.write(packet)
@@ -183,10 +180,8 @@ class PTZController:
             self._error_count += 1
             if self._error_count >= self._max_errors_before_reconnect:
                 logger.warning("Too many PTZ errors, closing serial for reconnect")
-                try:
+                with contextlib.suppress(Exception):
                     self._serial.close()
-                except Exception:
-                    pass
                 self._serial = None
             return False
 
@@ -338,9 +333,7 @@ class PTZController:
 
         return self._position.copy()
 
-    async def move_to(
-        self, pan: float, tilt: float, zoom: float | None = None
-    ) -> dict:
+    async def move_to(self, pan: float, tilt: float, zoom: float | None = None) -> dict:
         """Move to absolute position. Serialized via lock — pan, tilt, zoom
         execute sequentially (not interleaved with other commands)."""
         async with self._lock:
@@ -385,9 +378,7 @@ class PTZController:
         """Shut down — always stop motors first."""
         self._send_stop()
         if self._serial:
-            try:
+            with contextlib.suppress(Exception):
                 self._serial.close()
-            except Exception:
-                pass
             self._serial = None
         self._motion_state = MotionState.IDLE

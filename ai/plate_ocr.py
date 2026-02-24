@@ -1,5 +1,6 @@
 """CRNN-based license plate OCR with state-specific validation,
 confusion correction, duplicate suppression, and partial-read merging."""
+
 import logging
 import re
 import time
@@ -46,8 +47,12 @@ STATE_PATTERNS: dict[str, list[re.Pattern]] = {
     # Delaware: 000000 (up to 6 digits, no letters)
     "DE": [re.compile(r"^\d{1,6}$")],
     # Florida: AAA A00 or 000 AAA
-    "FL": [re.compile(r"^[A-Z]{3}[A-Z]\d{2}$"), re.compile(r"^[A-Z]{4}\d{2}$"),
-           re.compile(r"^\d{3}[A-Z]{3}$"), re.compile(r"^[A-Z]{3}\d{3}$")],
+    "FL": [
+        re.compile(r"^[A-Z]{3}[A-Z]\d{2}$"),
+        re.compile(r"^[A-Z]{4}\d{2}$"),
+        re.compile(r"^\d{3}[A-Z]{3}$"),
+        re.compile(r"^[A-Z]{3}\d{3}$"),
+    ],
     # Georgia: AAA0000
     "GA": [re.compile(r"^[A-Z]{3}\d{4}$")],
     # Hawaii: AAA 000 or 000 AAA
@@ -278,19 +283,19 @@ def _apply_confusion_correction(text: str, pattern: re.Pattern | None = None) ->
         c = corrected[pos]
 
         # Determine what this position expects
-        if pat_str[pat_idx] == '[':
+        if pat_str[pat_idx] == "[":
             # Character class — find closing bracket
-            end = pat_str.index(']', pat_idx)
-            char_class = pat_str[pat_idx + 1:end]
+            end = pat_str.index("]", pat_idx)
+            char_class = pat_str[pat_idx + 1 : end]
             pat_idx = end + 1
 
             # Check for quantifier
-            if pat_idx < len(pat_str) and pat_str[pat_idx] == '{':
-                q_end = pat_str.index('}', pat_idx)
+            if pat_idx < len(pat_str) and pat_str[pat_idx] == "{":
+                q_end = pat_str.index("}", pat_idx)
                 pat_idx = q_end + 1
 
-            expects_letter = 'A-Z' in char_class and '0-9' not in char_class
-            expects_digit = '0-9' in char_class and 'A-Z' not in char_class
+            expects_letter = "A-Z" in char_class and "0-9" not in char_class
+            expects_digit = "0-9" in char_class and "A-Z" not in char_class
 
             if expects_letter and c.isdigit() and c in _DIGIT_TO_LETTER:
                 corrected[pos] = _DIGIT_TO_LETTER[c]
@@ -299,16 +304,16 @@ def _apply_confusion_correction(text: str, pattern: re.Pattern | None = None) ->
 
             pos += 1
 
-        elif pat_str[pat_idx] == '\\' and pat_idx + 1 < len(pat_str):
+        elif pat_str[pat_idx] == "\\" and pat_idx + 1 < len(pat_str):
             next_c = pat_str[pat_idx + 1]
-            if next_c == 'd':
+            if next_c == "d":
                 # Expects digit
                 if c.isalpha() and c in _LETTER_TO_DIGIT:
                     corrected[pos] = _LETTER_TO_DIGIT[c]
                 pat_idx += 2
                 # Check for quantifier
-                if pat_idx < len(pat_str) and pat_str[pat_idx] == '{':
-                    q_end = pat_str.index('}', pat_idx)
+                if pat_idx < len(pat_str) and pat_str[pat_idx] == "{":
+                    q_end = pat_str.index("}", pat_idx)
                     pat_idx = q_end + 1
                 pos += 1
             else:
@@ -366,9 +371,7 @@ class PlateOCR:
         enhanced = self._clahe.apply(gray)
 
         # Resize to fixed input size
-        resized = cv2.resize(
-            enhanced, (self.input_w, self.input_h), interpolation=cv2.INTER_LINEAR
-        )
+        resized = cv2.resize(enhanced, (self.input_w, self.input_h), interpolation=cv2.INTER_LINEAR)
 
         # Normalize to [0, 1] and add batch + channel dims
         blob = resized.astype(np.float32) / 255.0
@@ -402,10 +405,9 @@ class PlateOCR:
 
         for t in range(len(indices)):
             idx = indices[t]
-            if idx != BLANK_IDX and idx != prev_idx:
-                if idx < len(CHARSET):
-                    chars.append(CHARSET[idx])
-                    char_confs.append(float(max_probs[t]))
+            if idx != BLANK_IDX and idx != prev_idx and idx < len(CHARSET):
+                chars.append(CHARSET[idx])
+                char_confs.append(float(max_probs[t]))
             prev_idx = idx
 
         text = "".join(chars)
@@ -489,8 +491,12 @@ class PlateOCR:
             low_chars = sum(1 for c in char_confs if c < self.char_conf_min)
             if low_chars > len(char_confs) * 0.3:
                 # Too many low-confidence characters — unreliable read
-                logger.debug("Rejecting plate %s: %d/%d chars below min confidence",
-                             raw_text, low_chars, len(char_confs))
+                logger.debug(
+                    "Rejecting plate %s: %d/%d chars below min confidence",
+                    raw_text,
+                    low_chars,
+                    len(char_confs),
+                )
                 return None
 
         # Average confidence threshold
@@ -505,11 +511,13 @@ class PlateOCR:
                 corrected_text = _apply_confusion_correction(raw_text, pattern)
 
         # Validate plate format
-        if self.validate and not self.validate_plate(corrected_text, state):
-            # Try without state-specific validation as fallback
-            if not self.validate_plate(corrected_text):
-                logger.debug("Plate validation failed for: %s (state=%s)", corrected_text, state)
-                return None
+        if (
+            self.validate
+            and not self.validate_plate(corrected_text, state)
+            and not self.validate_plate(corrected_text)
+        ):
+            logger.debug("Plate validation failed for: %s (state=%s)", corrected_text, state)
+            return None
 
         # Partial-read merging
         if plate_bbox:

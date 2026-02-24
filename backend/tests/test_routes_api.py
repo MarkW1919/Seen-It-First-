@@ -1,21 +1,22 @@
 """Tests for route API schemas and helper logic — no DB required."""
+
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
+import pytest
+from fastapi import HTTPException
+from pydantic import ValidationError
+
 from app.routers.routes import (
-    StopCreate,
     RouteCreate,
-    StopResponse,
     RouteResponse,
+    StopCreate,
+    StopResponse,
     StopUpdate,
     _get_stop_by_index,
     _route_to_response,
 )
-
-import pytest
-from fastapi import HTTPException
-
 
 # ── Schema validation ────────────────────────────────────────────────────────
 
@@ -27,30 +28,36 @@ def test_stop_create_defaults():
 
 def test_stop_create_custom_geofence():
     s = StopCreate(
-        address="456 Oak Ave", latitude=34.0, longitude=-118.0,
+        address="456 Oak Ave",
+        latitude=34.0,
+        longitude=-118.0,
         geofence_radius_m=100.0,
     )
     assert s.geofence_radius_m == 100.0
 
 
 def test_stop_create_geofence_min_bound():
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         StopCreate(
-            address="789 Pine", latitude=33.0, longitude=-112.0,
+            address="789 Pine",
+            latitude=33.0,
+            longitude=-112.0,
             geofence_radius_m=5.0,  # below 10.0 minimum
         )
 
 
 def test_stop_create_geofence_max_bound():
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         StopCreate(
-            address="789 Pine", latitude=33.0, longitude=-112.0,
+            address="789 Pine",
+            latitude=33.0,
+            longitude=-112.0,
             geofence_radius_m=600.0,  # above 500.0 maximum
         )
 
 
 def test_route_create_requires_at_least_one_stop():
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         RouteCreate(name="Empty", stops=[])
 
 
@@ -67,9 +74,7 @@ def test_route_create_with_stops():
 
 
 def test_route_create_name_optional():
-    rc = RouteCreate(
-        stops=[StopCreate(address="A", latitude=33.0, longitude=-112.0)]
-    )
+    rc = RouteCreate(stops=[StopCreate(address="A", latitude=33.0, longitude=-112.0)])
     assert rc.name is None
 
 
@@ -113,7 +118,7 @@ def test_route_response_structure():
         status="active",
         current_stop_index=0,
         total_stops=3,
-        created_at=datetime.now(timezone.utc).isoformat(),
+        created_at=datetime.now(UTC).isoformat(),
     )
     assert rr.status == "active"
     assert rr.stops == []
@@ -138,7 +143,7 @@ def test_route_response_with_stops():
         status="active",
         current_stop_index=0,
         total_stops=3,
-        created_at=datetime.now(timezone.utc).isoformat(),
+        created_at=datetime.now(UTC).isoformat(),
         stops=stops,
     )
     assert len(rr.stops) == 3
@@ -177,7 +182,7 @@ def _make_route(num_stops):
         status="active",
         current_stop_index=0,
         total_stops=num_stops,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
         completed_at=None,
         stops=[_make_stop(route_id, i) for i in range(num_stops)],
     )
@@ -217,7 +222,7 @@ def test_route_to_response_conversion():
 def test_route_to_response_completed_route():
     route = _make_route(1)
     route.status = "completed"
-    route.completed_at = datetime.now(timezone.utc)
+    route.completed_at = datetime.now(UTC)
     resp = _route_to_response(route)
     assert resp.status == "completed"
     assert resp.completed_at is not None
@@ -225,7 +230,7 @@ def test_route_to_response_completed_route():
 
 def test_route_to_response_stop_timestamps():
     route = _make_route(1)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     route.stops[0].status = "completed"
     route.stops[0].arrived_at = now
     route.stops[0].scan_started_at = now
