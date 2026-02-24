@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import uuid
 
 from fastapi import WebSocket, WebSocketDisconnect
 
@@ -9,57 +10,111 @@ from app.services.auth_service import decode_token
 
 logger = logging.getLogger(__name__)
 
+# Timeout for individual client sends — prevents a slow client from blocking others
+SEND_TIMEOUT_SECONDS = 5.0
+
+# Retry settings for Redis listener reconnection
+REDIS_RECONNECT_DELAYS = [1, 2, 4, 8, 15, 30]
+
 
 class ConnectionManager:
-    def __init__(self):
+    def __init__(self) -> None:
+        # Use a dict keyed by unique connection ID (not user ID) to support
+        # multiple connections per user without overwriting
         self.active_connections: dict[str, WebSocket] = {}
+        self._lock = asyncio.Lock()
 
-    async def connect(self, websocket: WebSocket, client_id: str):
+    async def connect(self, websocket: WebSocket, client_id: str) -> str:
+        """Accept and register a WebSocket connection. Returns a unique connection ID."""
         await websocket.accept()
-        self.active_connections[client_id] = websocket
-        logger.info(f"WebSocket client connected: {client_id}")
+        conn_id = f"{client_id}:{uuid.uuid4().hex[:8]}"
+        async with self._lock:
+            self.active_connections[conn_id] = websocket
+        logger.info("WebSocket client connected: %s", conn_id)
+        return conn_id
 
-    def disconnect(self, client_id: str):
-        self.active_connections.pop(client_id, None)
-        logger.info(f"WebSocket client disconnected: {client_id}")
+    async def disconnect(self, conn_id: str) -> None:
+        async with self._lock:
+            self.active_connections.pop(conn_id, None)
+        logger.info("WebSocket client disconnected: %s", conn_id)
 
-    async def send_to_client(self, client_id: str, message: dict):
-        ws = self.active_connections.get(client_id)
+    async def send_to_client(self, conn_id: str, message: dict) -> None:
+        async with self._lock:
+            ws = self.active_connections.get(conn_id)
         if ws:
             try:
-                await ws.send_json(message)
-            except Exception:
-                self.disconnect(client_id)
+                await asyncio.wait_for(ws.send_json(message), timeout=SEND_TIMEOUT_SECONDS)
+            except (asyncio.TimeoutError, Exception):
+                await self.disconnect(conn_id)
 
-    async def broadcast(self, message: dict):
-        disconnected = []
-        for client_id, ws in self.active_connections.items():
+    async def broadcast(self, message: dict) -> None:
+        """Send message to ALL connected clients concurrently.
+
+        Uses asyncio.gather so a slow client cannot block delivery to others.
+        Each send has an individual timeout to prevent indefinite hangs.
+        """
+        async with self._lock:
+            snapshot = dict(self.active_connections)
+
+        if not snapshot:
+            return
+
+        async def _safe_send(conn_id: str, ws: WebSocket) -> str | None:
             try:
-                await ws.send_json(message)
-            except Exception:
-                disconnected.append(client_id)
-        for cid in disconnected:
-            self.disconnect(cid)
+                await asyncio.wait_for(ws.send_json(message), timeout=SEND_TIMEOUT_SECONDS)
+                return None
+            except (asyncio.TimeoutError, Exception):
+                return conn_id
+
+        results = await asyncio.gather(
+            *(_safe_send(cid, ws) for cid, ws in snapshot.items()),
+            return_exceptions=True,
+        )
+
+        # Clean up failed connections
+        for result in results:
+            if isinstance(result, str):
+                await self.disconnect(result)
 
 
 manager = ConnectionManager()
 
 
-async def redis_listener():
-    """Background task that listens to Redis pub/sub and forwards to WebSocket clients."""
-    try:
-        pubsub = await alert_service.get_subscriber()
-        async for message in pubsub.listen():
-            if message["type"] == "message":
-                data = json.loads(message["data"])
-                await manager.broadcast(data)
-    except asyncio.CancelledError:
-        pass
-    except Exception as e:
-        logger.error(f"Redis listener error: {e}")
+async def redis_listener() -> None:
+    """Background task that listens to Redis pub/sub and forwards to WebSocket clients.
+
+    Automatically reconnects on failure with exponential backoff.
+    """
+    attempt = 0
+    while True:
+        try:
+            pubsub = await alert_service.get_subscriber()
+            attempt = 0  # Reset on successful connection
+            logger.info("Redis listener connected")
+
+            async for message in pubsub.listen():
+                if message["type"] == "message":
+                    try:
+                        data = json.loads(message["data"])
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+                    # Fire-and-forget broadcast — don't let broadcast errors kill the listener
+                    try:
+                        await manager.broadcast(data)
+                    except Exception as e:
+                        logger.error("Broadcast error: %s", e)
+
+        except asyncio.CancelledError:
+            logger.info("Redis listener cancelled, shutting down")
+            return
+        except Exception as e:
+            delay = REDIS_RECONNECT_DELAYS[min(attempt, len(REDIS_RECONNECT_DELAYS) - 1)]
+            logger.error("Redis listener error: %s — reconnecting in %ds", e, delay)
+            attempt += 1
+            await asyncio.sleep(delay)
 
 
-async def websocket_endpoint(websocket: WebSocket, token: str | None = None):
+async def websocket_endpoint(websocket: WebSocket, token: str | None = None) -> None:
     """WebSocket endpoint for real-time alerts and detection feed."""
     # Authenticate via token query param
     client_id = "anonymous"
@@ -71,7 +126,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str | None = None):
             await websocket.close(code=4001, reason="Invalid token")
             return
 
-    await manager.connect(websocket, client_id)
+    conn_id = await manager.connect(websocket, client_id)
     try:
         while True:
             # Keep connection alive; handle client messages
@@ -90,4 +145,4 @@ async def websocket_endpoint(websocket: WebSocket, token: str | None = None):
             except json.JSONDecodeError:
                 pass
     except WebSocketDisconnect:
-        manager.disconnect(client_id)
+        await manager.disconnect(conn_id)

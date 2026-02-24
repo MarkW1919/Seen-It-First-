@@ -7,6 +7,9 @@ from scipy.optimize import linear_sum_assignment
 
 logger = logging.getLogger(__name__)
 
+# Maximum detections stored per track to prevent unbounded memory growth
+MAX_TRACK_DETECTIONS = 10
+
 
 @dataclass
 class KalmanState:
@@ -69,6 +72,12 @@ class Track:
     def bbox(self) -> list[int]:
         return self.state.bbox
 
+    def add_detection(self, detection: dict):
+        """Add a detection and prune history to bounded size."""
+        self.detections.append(detection)
+        if len(self.detections) > MAX_TRACK_DETECTIONS:
+            self.detections = self.detections[-MAX_TRACK_DETECTIONS:]
+
 
 class MultiObjectTracker:
     """Simplified DeepSORT tracker using IoU + Kalman filtering."""
@@ -111,7 +120,7 @@ class MultiObjectTracker:
                     self.tracks[r].state.update(detections[c]["bbox"])
                     self.tracks[r].hits += 1
                     self.tracks[r].time_since_update = 0
-                    self.tracks[r].detections.append(detections[c])
+                    self.tracks[r].add_detection(detections[c])
                     matched_tracks.add(r)
                     matched_dets.add(c)
 

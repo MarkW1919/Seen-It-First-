@@ -333,17 +333,41 @@ class ApiClient {
     pan?: number;
     tilt?: number;
     zoom?: number;
+    speed?: number;
   }) {
+    // Client-side boundary enforcement (matches backend/camera limits)
+    const PTZ_LIMITS = {
+      PAN_MIN: -180, PAN_MAX: 180,
+      TILT_MIN: -70, TILT_MAX: 70,
+      ZOOM_MIN: 1, ZOOM_MAX: 30,
+    };
+
+    const validated = { ...cmd };
+    if (validated.pan !== undefined) {
+      // Wrap pan to [-180, 180] for 360° range
+      while (validated.pan > PTZ_LIMITS.PAN_MAX) validated.pan -= 360;
+      while (validated.pan < PTZ_LIMITS.PAN_MIN) validated.pan += 360;
+    }
+    if (validated.tilt !== undefined) {
+      validated.tilt = Math.max(PTZ_LIMITS.TILT_MIN, Math.min(PTZ_LIMITS.TILT_MAX, validated.tilt));
+    }
+    if (validated.zoom !== undefined) {
+      validated.zoom = Math.max(PTZ_LIMITS.ZOOM_MIN, Math.min(PTZ_LIMITS.ZOOM_MAX, validated.zoom));
+    }
+    if (validated.speed !== undefined) {
+      validated.speed = Math.max(0, Math.min(1, validated.speed));
+    }
+
     if (this._demoMode) {
       await delay(200);
-      if (cmd.pan !== undefined) this._demoCameraStatus.ptz_position.pan = cmd.pan;
-      if (cmd.tilt !== undefined) this._demoCameraStatus.ptz_position.tilt = cmd.tilt;
-      if (cmd.zoom !== undefined) this._demoCameraStatus.ptz_position.zoom = cmd.zoom;
+      if (validated.pan !== undefined) this._demoCameraStatus.ptz_position.pan = validated.pan;
+      if (validated.tilt !== undefined) this._demoCameraStatus.ptz_position.tilt = validated.tilt;
+      if (validated.zoom !== undefined) this._demoCameraStatus.ptz_position.zoom = validated.zoom;
       return { status: "ok", position: this._demoCameraStatus.ptz_position };
     }
     return this.request("/camera/ptz", {
       method: "POST",
-      body: JSON.stringify(cmd),
+      body: JSON.stringify(validated),
     });
   }
 

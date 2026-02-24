@@ -1,3 +1,4 @@
+import logging
 import uuid
 from datetime import datetime
 
@@ -16,6 +17,8 @@ from app.services.detection_service import (
 )
 from app.services.hotlist_service import check_plate_against_hotlist, create_alert
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/detections", tags=["detections"])
 
 
@@ -27,10 +30,21 @@ async def create_new_detection(
 ):
     detection = await create_detection(db, data, agent_id=user.id)
 
+    # Collect alert payloads to publish AFTER commit (prevents race condition
+    # where WebSocket clients receive alerts before DB records are visible)
+    pending_alert_publishes: list[dict] = []
+
     # Check each plate read against the hot list
+    # The O(1) Redis cache check short-circuits non-matches instantly
+    seen_entries: set[uuid.UUID] = set()
     for pr in data.plate_reads:
         matches = await check_plate_against_hotlist(db, pr.plate_text)
         for match in matches:
+            # Skip if we already created an alert for this entry in this detection
+            if match.id in seen_entries:
+                continue
+            seen_entries.add(match.id)
+
             alert = await create_alert(
                 db,
                 hotlist_entry_id=match.id,
@@ -42,28 +56,36 @@ async def create_new_detection(
                 longitude=data.longitude,
                 address=data.address,
             )
-            # Push real-time alert
-            await alert_service.publish_alert(
-                alert_id=alert.id,
-                hotlist_entry_id=match.id,
-                plate_text=pr.plate_text,
-                confidence=pr.confidence,
-                vehicle_info={
-                    "type": data.vehicle_type,
-                    "color": data.vehicle_color,
-                    "make": data.vehicle_make,
-                    "model": data.vehicle_model,
-                    "year": data.vehicle_year,
-                },
-                location={
-                    "lat": data.latitude,
-                    "lng": data.longitude,
-                    "address": data.address,
-                },
-                image_path=data.image_path,
-            )
+            # alert is None if suppressed by cooldown or dedup lock
+            if alert is not None:
+                pending_alert_publishes.append({
+                    "alert_id": alert.id,
+                    "hotlist_entry_id": match.id,
+                    "plate_text": pr.plate_text,
+                    "confidence": pr.confidence,
+                    "vehicle_info": {
+                        "type": data.vehicle_type,
+                        "color": data.vehicle_color,
+                        "make": data.vehicle_make,
+                        "model": data.vehicle_model,
+                        "year": data.vehicle_year,
+                    },
+                    "location": {
+                        "lat": data.latitude,
+                        "lng": data.longitude,
+                        "address": data.address,
+                    },
+                    "image_path": data.image_path,
+                })
 
-    # Publish detection to live feed
+    # COMMIT first — ensures all DB records are visible before broadcasting
+    await db.commit()
+
+    # Now publish alerts via Redis (post-commit, no race condition)
+    for payload in pending_alert_publishes:
+        await alert_service.publish_alert(**payload)
+
+    # Publish detection to live feed (also post-commit)
     plate_text = data.plate_reads[0].plate_text if data.plate_reads else None
     await alert_service.publish_detection(
         detection_id=detection.id,
@@ -78,7 +100,6 @@ async def create_new_detection(
         location={"lat": data.latitude, "lng": data.longitude},
     )
 
-    await db.commit()
     return await get_detection(db, detection.id)
 
 

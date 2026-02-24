@@ -47,12 +47,22 @@ async def import_hotlist_entries(
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
-    created = []
-    for entry_data in data.entries:
-        entry = await create_entry(db, entry_data)
-        created.append(entry)
-    await db.commit()
-    return {"imported": len(created)}
+    """Bulk import with batched commits to avoid holding a single long transaction.
+
+    Commits every 100 entries so large imports don't accumulate thousands of
+    unflushed objects in memory or hold locks for extended periods.
+    """
+    BATCH_SIZE = 100
+    total_imported = 0
+
+    for i in range(0, len(data.entries), BATCH_SIZE):
+        batch = data.entries[i : i + BATCH_SIZE]
+        for entry_data in batch:
+            await create_entry(db, entry_data)
+        await db.commit()
+        total_imported += len(batch)
+
+    return {"imported": total_imported}
 
 
 @router.get("/entries", response_model=list[HotListEntryResponse])

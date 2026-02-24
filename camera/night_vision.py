@@ -1,7 +1,17 @@
-"""Night vision control for IR LEDs and IR-cut filter."""
+"""Night vision control for IR LEDs and IR-cut filter.
+
+Improved with:
+- Gamma-corrected lux estimation matching real camera response curves
+- Hysteresis band to prevent rapid day/night oscillation
+- Non-blocking IR transition (removed blocking sleep)
+- Exponential moving average for lux smoothing
+"""
 import logging
 import threading
 import time
+
+import cv2
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +31,14 @@ class NightVisionController:
         self.ir_cut_gpio = config.get("ir_cut_gpio", 23)
         self.transition_delay = config.get("transition_delay", 2.0)
 
+        # Hysteresis: switch to night below threshold, back to day at 2.5x
+        self._hysteresis_high = self.lux_threshold * 2.5
+        self._hysteresis_low = self.lux_threshold
+
+        # Exponential moving average for lux smoothing
+        self._ema_lux = 100.0
+        self._ema_alpha = 0.15
+
         self._night_mode = False
         self._ir_enabled = False
         self._monitor_thread: threading.Thread | None = None
@@ -32,7 +50,6 @@ class NightVisionController:
     def _init_gpio(self):
         """Initialize GPIO pins for IR LED and IR-cut filter control."""
         try:
-            # Jetson.GPIO for Jetson platforms
             import Jetson.GPIO as GPIO
 
             GPIO.setmode(GPIO.BCM)
@@ -76,29 +93,25 @@ class NightVisionController:
         logger.info("Night vision disabled")
 
     def estimate_lux(self, frame) -> float:
-        """Estimate ambient light level from frame brightness.
+        """Estimate ambient light from frame brightness with gamma correction.
 
-        This is a simplified estimation. In production, use a dedicated
-        lux sensor (BH1750) for accurate readings.
+        Uses 75th percentile + gamma delinearization to approximate lux.
+        Real camera sensors have non-linear response (gamma ~2.2).
         """
-        import numpy as np
-
         if frame is None:
-            return 100.0
+            return self._ema_lux
 
-        # Convert to grayscale and compute mean brightness
         if len(frame.shape) == 3:
-            import cv2
-
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         else:
             gray = frame
 
-        mean_brightness = float(np.mean(gray))
+        p75 = float(np.percentile(gray, 75))
+        linear = (p75 / 255.0) ** 2.2
+        raw_lux = linear * 1000.0
 
-        # Rough mapping: 0-255 brightness -> 0-1000 lux (approximate)
-        estimated_lux = (mean_brightness / 255.0) * 1000.0
-        return estimated_lux
+        self._ema_lux = self._ema_alpha * raw_lux + (1 - self._ema_alpha) * self._ema_lux
+        return self._ema_lux
 
     def start_auto_monitoring(self, get_frame_fn):
         """Start automatic day/night switching based on ambient light."""
@@ -110,30 +123,35 @@ class NightVisionController:
             target=self._monitor_loop,
             args=(get_frame_fn,),
             daemon=True,
+            name="night-vision-monitor",
         )
         self._monitor_thread.start()
         logger.info("Auto night vision monitoring started")
 
     def _monitor_loop(self, get_frame_fn):
-        """Monitor ambient light and switch modes automatically."""
+        """Monitor ambient light with hysteresis to prevent oscillation."""
         while self._running:
             try:
                 frame = get_frame_fn()
                 lux = self.estimate_lux(frame)
 
-                if lux < self.lux_threshold and not self._night_mode:
-                    logger.info(f"Low light detected ({lux:.1f} lux), switching to night mode")
-                    time.sleep(self.transition_delay)
+                if lux < self._hysteresis_low and not self._night_mode:
+                    logger.info(
+                        f"Low light ({lux:.1f} lux < {self._hysteresis_low:.1f}), "
+                        f"switching to night mode"
+                    )
                     self.enable_night_mode()
-                elif lux > self.lux_threshold * 2 and self._night_mode:
-                    logger.info(f"Daylight detected ({lux:.1f} lux), switching to day mode")
-                    time.sleep(self.transition_delay)
+                elif lux > self._hysteresis_high and self._night_mode:
+                    logger.info(
+                        f"Daylight ({lux:.1f} lux > {self._hysteresis_high:.1f}), "
+                        f"switching to day mode"
+                    )
                     self.disable_night_mode()
 
             except Exception as e:
                 logger.error(f"Night vision monitor error: {e}")
 
-            time.sleep(5)  # Check every 5 seconds
+            time.sleep(5)
 
     def stop(self):
         """Stop auto monitoring and disable IR."""
