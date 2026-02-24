@@ -8,7 +8,7 @@ from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.config import get_settings
 from app.database import async_session, init_db
-from app.routers import auth, detections, hotlist, plates, search, camera, system
+from app.routers import auth, camera, detections, hotlist, plates, routes, search, system
 from app.services.alert_service import alert_service
 from app.services.hotlist_service import hotlist_cache
 from app.websocket.handler import websocket_endpoint, redis_listener
@@ -76,6 +76,7 @@ app.include_router(plates.router)
 app.include_router(search.router)
 app.include_router(camera.router)
 app.include_router(system.router)
+app.include_router(routes.router)
 
 # WebSocket
 app.websocket("/ws")(websocket_endpoint)

@@ -8,6 +8,8 @@ import com.reposcan.pro.data.model.HotListEntry
 import com.reposcan.pro.data.model.LoginRequest
 import com.reposcan.pro.data.model.RefreshRequest
 import com.reposcan.pro.data.model.RegisterRequest
+import com.reposcan.pro.data.model.RouteCreateRequest
+import com.reposcan.pro.data.model.RouteResponse
 import com.reposcan.pro.data.model.SystemStats
 import com.reposcan.pro.data.model.TokenResponse
 import com.reposcan.pro.data.model.User
@@ -101,4 +103,46 @@ interface ApiService {
     // Health
     @GET("health")
     suspend fun healthCheck(): Response<Map<String, String>>
+
+    // Routes
+    @POST("api/routes")
+    suspend fun createRoute(@Body body: RouteCreateRequest): Response<RouteResponse>
+
+    @GET("api/routes")
+    suspend fun getRoutes(
+        @Query("status_filter") statusFilter: String? = null
+    ): Response<List<RouteResponse>>
+
+    @GET("api/routes/active")
+    suspend fun getActiveRoute(): Response<RouteResponse>
+
+    @GET("api/routes/{routeId}")
+    suspend fun getRoute(@Path("routeId") routeId: String): Response<RouteResponse>
+
+    @POST("api/routes/{routeId}/stops/{stopIndex}/arrive")
+    suspend fun markArrival(
+        @Path("routeId") routeId: String,
+        @Path("stopIndex") stopIndex: Int
+    ): Response<Map<String, Any>>
+
+    @POST("api/routes/{routeId}/stops/{stopIndex}/scan-start")
+    suspend fun startScanAtStop(
+        @Path("routeId") routeId: String,
+        @Path("stopIndex") stopIndex: Int
+    ): Response<Map<String, Any>>
+
+    @POST("api/routes/{routeId}/stops/{stopIndex}/complete")
+    suspend fun completeStop(
+        @Path("routeId") routeId: String,
+        @Path("stopIndex") stopIndex: Int
+    ): Response<Map<String, Any>>
+
+    @POST("api/routes/{routeId}/stops/{stopIndex}/skip")
+    suspend fun skipStop(
+        @Path("routeId") routeId: String,
+        @Path("stopIndex") stopIndex: Int
+    ): Response<Map<String, Any>>
+
+    @DELETE("api/routes/{routeId}")
+    suspend fun deleteRoute(@Path("routeId") routeId: String): Response<Unit>
 }
