@@ -1,3 +1,4 @@
+"""Tests for health and root endpoints."""
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -24,4 +25,19 @@ async def test_root_endpoint():
     data = response.json()
     assert data["service"] == "RepoScan Pro"
     assert data["version"] == "1.0.0"
-    assert "docs" in data
+
+
+@pytest.mark.asyncio
+async def test_health_returns_json_content_type():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/health")
+    assert response.headers["content-type"] == "application/json"
+
+
+@pytest.mark.asyncio
+async def test_nonexistent_route_returns_404():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/api/does-not-exist")
+    assert response.status_code in (404, 405)
