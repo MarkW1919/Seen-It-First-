@@ -1,7 +1,8 @@
 package com.reposcan.pro.util
 
 object Constants {
-    const val DEFAULT_BASE_URL = "http://10.0.2.2:8000/"
+    const val DEFAULT_BASE_URL = "https://reposcan.local/"
+    const val API_HOST = "reposcan.local"
     const val PREFERENCES_NAME = "reposcan_preferences"
     const val KEY_ACCESS_TOKEN = "access_token"
     const val KEY_REFRESH_TOKEN = "refresh_token"
