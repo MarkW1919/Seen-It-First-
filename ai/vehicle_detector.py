@@ -120,7 +120,7 @@ class VehicleDetector:
 
         detections = []
         for i in indices:
-            idx = i[0] if isinstance(i, (list, np.ndarray)) else i
+            idx = i[0] if isinstance(i, list | np.ndarray) else i
             cls_id = class_ids[idx]
             if cls_id < len(self.classes):
                 detections.append(
