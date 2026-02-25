@@ -28,6 +28,9 @@ jobs:
   backend-lint-test:
     name: Backend Lint & Test
     runs-on: ubuntu-latest
+    env:
+      SECRET_KEY: ci-test-key-not-for-production
+      POSTGRES_PASSWORD: ci-test-password
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -36,9 +39,13 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements-dev.txt
       - run: pip install -r backend/requirements-dev.txt
-      - run: ruff check backend/ ai/ camera/
-      - run: ruff format --check backend/ ai/ camera/
-      - run: pytest backend/tests/ -v
+      - name: Lint Python (backend, ai, camera)
+        run: ruff check --config ruff.toml backend/ ai/ camera/
+      - name: Check formatting (backend, ai, camera)
+        run: ruff format --check --config ruff.toml backend/ ai/ camera/
+      - name: Run backend tests
+        working-directory: backend
+        run: pytest tests/ -v
 
   docker-build:
     name: Docker Build Check

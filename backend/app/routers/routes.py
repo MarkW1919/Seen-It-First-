@@ -2,7 +2,7 @@ import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -31,6 +31,8 @@ class RouteCreate(BaseModel):
 
 
 class StopResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     order_index: int
     address: str
@@ -44,11 +46,10 @@ class StopResponse(BaseModel):
     plates_found: int = 0
     notes: str | None = None
 
-    class Config:
-        from_attributes = True
-
 
 class RouteResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     name: str | None
     status: str
@@ -57,9 +58,6 @@ class RouteResponse(BaseModel):
     created_at: str
     completed_at: str | None = None
     stops: list[StopResponse] = []
-
-    class Config:
-        from_attributes = True
 
 
 class StopUpdate(BaseModel):
