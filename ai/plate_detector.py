@@ -259,7 +259,7 @@ class PlateDetector:
 
         detections = []
         for i in indices:
-            idx = i[0] if isinstance(i, (list, np.ndarray)) else i
+            idx = i[0] if isinstance(i, list | np.ndarray) else i
             detections.append(
                 {
                     "confidence": float(scores[idx]),
