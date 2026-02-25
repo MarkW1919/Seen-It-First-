@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -24,9 +24,7 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 
 def create_access_token(user_id: uuid.UUID, role: str) -> str:
-    expire = datetime.now(timezone.utc) + timedelta(
-        minutes=settings.access_token_expire_minutes
-    )
+    expire = datetime.now(UTC) + timedelta(minutes=settings.access_token_expire_minutes)
     payload = {
         "sub": str(user_id),
         "role": role,
@@ -37,9 +35,7 @@ def create_access_token(user_id: uuid.UUID, role: str) -> str:
 
 
 def create_refresh_token(user_id: uuid.UUID) -> str:
-    expire = datetime.now(timezone.utc) + timedelta(
-        days=settings.refresh_token_expire_days
-    )
+    expire = datetime.now(UTC) + timedelta(days=settings.refresh_token_expire_days)
     payload = {
         "sub": str(user_id),
         "type": "refresh",
@@ -55,9 +51,7 @@ def decode_token(token: str) -> dict | None:
         return None
 
 
-async def authenticate_user(
-    db: AsyncSession, email: str, password: str
-) -> User | None:
+async def authenticate_user(db: AsyncSession, email: str, password: str) -> User | None:
     result = await db.execute(select(User).where(User.email == email))
     user = result.scalar_one_or_none()
     if user and verify_password(password, user.hashed_password):

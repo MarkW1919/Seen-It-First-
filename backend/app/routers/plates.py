@@ -1,8 +1,5 @@
-import uuid
-from datetime import datetime
-
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -20,9 +17,7 @@ async def get_recent_plates(
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
-    result = await db.execute(
-        select(PlateRead).order_by(PlateRead.created_at.desc()).limit(limit)
-    )
+    result = await db.execute(select(PlateRead).order_by(PlateRead.created_at.desc()).limit(limit))
     return list(result.scalars().all())
 
 
@@ -32,9 +27,7 @@ async def get_plate_stats(
     _user: User = Depends(get_current_user),
 ):
     total = (await db.execute(select(func.count(PlateRead.id)))).scalar() or 0
-    unique = (
-        await db.execute(select(func.count(PlateRead.plate_text.distinct())))
-    ).scalar() or 0
+    unique = (await db.execute(select(func.count(PlateRead.plate_text.distinct())))).scalar() or 0
 
     # State breakdown
     state_counts = await db.execute(
@@ -48,9 +41,7 @@ async def get_plate_stats(
     return {
         "total_reads": total,
         "unique_plates": unique,
-        "top_states": [
-            {"state": row[0], "count": row[1]} for row in state_counts.all()
-        ],
+        "top_states": [{"state": row[0], "count": row[1]} for row in state_counts.all()],
     }
 
 

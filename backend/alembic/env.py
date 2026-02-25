@@ -7,6 +7,7 @@ Fixes:
   dropping tables or columns not managed by the models.
 - Properly imports all models so autogenerate can diff correctly.
 """
+
 from logging.config import fileConfig
 
 from alembic import context
@@ -14,7 +15,7 @@ from sqlalchemy import engine_from_config, pool
 
 from app.config import get_settings
 from app.database import Base
-from app.models import *  # noqa: F401,F403 — import all models for metadata
+from app.models import *
 
 config = context.config
 settings = get_settings()
@@ -36,13 +37,7 @@ def include_object(object, name, type_, reflected, compare_to):
     Developers must write explicit drop migrations when intentionally removing
     schema objects.
     """
-    if type_ == "table" and reflected and compare_to is None:
-        # Table exists in DB but not in models — skip (don't drop)
-        return False
-    if type_ == "column" and reflected and compare_to is None:
-        # Column exists in DB but not in models — skip (don't drop)
-        return False
-    return True
+    return not (type_ in ("table", "column") and reflected and compare_to is None)
 
 
 def run_migrations_offline():

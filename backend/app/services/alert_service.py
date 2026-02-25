@@ -1,7 +1,8 @@
 """Real-time alert service using Redis pub/sub for hot list matches."""
+
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import redis.asyncio as redis
 
@@ -43,7 +44,7 @@ class AlertService:
             "vehicle": vehicle_info or {},
             "location": location or {},
             "image_path": image_path,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
         if self._redis:
             await self._redis.publish(self.CHANNEL, json.dumps(message))
@@ -62,7 +63,7 @@ class AlertService:
             "plate_text": plate_text,
             "vehicle": vehicle_info or {},
             "location": location or {},
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
         if self._redis:
             await self._redis.publish(self.CHANNEL, json.dumps(message))
@@ -72,7 +73,7 @@ class AlertService:
         message = {
             "type": f"system:{event_type}",
             "data": data,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
         if self._redis:
             await self._redis.publish(self.CHANNEL, json.dumps(message))

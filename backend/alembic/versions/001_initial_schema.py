@@ -4,10 +4,11 @@ Revision ID: 001_initial
 Revises:
 Create Date: 2026-02-16
 """
-from alembic import op
-import sqlalchemy as sa
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+
 import geoalchemy2
+import sqlalchemy as sa
+from alembic import op
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 # revision identifiers
 revision = "001_initial"
@@ -154,7 +155,9 @@ def upgrade() -> None:
             sa.ForeignKey("hotlist_entries.id", ondelete="CASCADE"),
             nullable=False,
         ),
-        sa.Column("detection_id", UUID(as_uuid=True), sa.ForeignKey("detections.id"), nullable=True),
+        sa.Column(
+            "detection_id", UUID(as_uuid=True), sa.ForeignKey("detections.id"), nullable=True
+        ),
         sa.Column("agent_id", UUID(as_uuid=True), sa.ForeignKey("users.id"), nullable=True),
         sa.Column("plate_text_matched", sa.String(20), nullable=False),
         sa.Column("match_confidence", sa.Float, nullable=False),

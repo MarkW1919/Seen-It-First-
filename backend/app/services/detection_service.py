@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 
 from geoalchemy2.functions import ST_MakePoint
-from sqlalchemy import select, func, and_, update
+from sqlalchemy import and_, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -125,9 +125,7 @@ async def list_detections(
     total = (await db.execute(count_query)).scalar() or 0
 
     query = (
-        query.order_by(Detection.created_at.desc())
-        .offset((page - 1) * page_size)
-        .limit(page_size)
+        query.order_by(Detection.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
     )
 
     result = await db.execute(query)
@@ -158,18 +156,12 @@ async def search_by_plate(
         .where(plate_filter)
         .distinct()
     )
-    count_query = (
-        select(func.count(Detection.id.distinct()))
-        .join(PlateRead)
-        .where(plate_filter)
-    )
+    count_query = select(func.count(Detection.id.distinct())).join(PlateRead).where(plate_filter)
 
     total = (await db.execute(count_query)).scalar() or 0
 
     query = (
-        query.order_by(Detection.created_at.desc())
-        .offset((page - 1) * page_size)
-        .limit(page_size)
+        query.order_by(Detection.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
     )
 
     result = await db.execute(query)
@@ -184,9 +176,9 @@ async def search_nearby(
     page: int = 1,
     page_size: int = 50,
 ) -> tuple[list[Detection], int]:
+    from geoalchemy2 import Geography
     from geoalchemy2.functions import ST_DWithin, ST_MakePoint
     from sqlalchemy import cast
-    from geoalchemy2 import Geography
 
     point = ST_MakePoint(longitude, latitude)
     radius_meters = radius_miles * 1609.34
@@ -204,17 +196,13 @@ async def search_nearby(
         .where(spatial_filter)
     )
     count_query = (
-        select(func.count(Detection.id))
-        .where(Detection.location.isnot(None))
-        .where(spatial_filter)
+        select(func.count(Detection.id)).where(Detection.location.isnot(None)).where(spatial_filter)
     )
 
     total = (await db.execute(count_query)).scalar() or 0
 
     query = (
-        query.order_by(Detection.created_at.desc())
-        .offset((page - 1) * page_size)
-        .limit(page_size)
+        query.order_by(Detection.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
     )
 
     result = await db.execute(query)

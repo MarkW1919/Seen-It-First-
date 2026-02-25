@@ -1,4 +1,10 @@
-"""YOLOv8-based vehicle detection optimized for Jetson Orin Nano Super."""
+"""YOLOv8-based vehicle detection optimized for Jetson Orin Nano Super.
+
+Performance optimizations:
+- Pre-allocated letterbox buffer reused across frames (eliminates ~1.2MB/frame alloc)
+- Channel-separated copy avoids intermediate transpose array
+"""
+
 import logging
 
 import cv2
@@ -24,12 +30,13 @@ class VehicleDetector:
             onnx_path=config.get("onnx_path"),
         )
 
-    def preprocess(self, frame: np.ndarray) -> tuple[np.ndarray, float, tuple[int, int]]:
-        """Preprocess frame for YOLO input.
+        # Pre-allocated letterbox buffer (reused every frame, zero per-frame alloc)
+        target_h, target_w = self.input_size
+        self._padded = np.full((target_h, target_w, 3), 114, dtype=np.uint8)
+        self._blob = np.empty((1, 3, target_h, target_w), dtype=np.float32)
 
-        Returns:
-            Preprocessed tensor, scale factor, and padding offset
-        """
+    def preprocess(self, frame: np.ndarray) -> tuple[np.ndarray, float, tuple[int, int]]:
+        """Preprocess frame for YOLO input with pre-allocated buffers."""
         h, w = frame.shape[:2]
         target_h, target_w = self.input_size
 
@@ -39,14 +46,18 @@ class VehicleDetector:
         pad_w, pad_h = (target_w - new_w) // 2, (target_h - new_h) // 2
 
         resized = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
-        padded = np.full((target_h, target_w, 3), 114, dtype=np.uint8)
-        padded[pad_h : pad_h + new_h, pad_w : pad_w + new_w] = resized
 
-        # HWC -> NCHW, normalize to [0, 1]
-        blob = padded.astype(np.float32) / 255.0
-        blob = blob.transpose(2, 0, 1)[np.newaxis, ...]
+        # Reuse pre-allocated padded buffer — fill border, then blit resized
+        self._padded[:] = 114
+        self._padded[pad_h : pad_h + new_h, pad_w : pad_w + new_w] = resized
 
-        return blob, scale, (pad_w, pad_h)
+        # Channel-separated copy into pre-allocated blob (avoids transpose + alloc)
+        self._blob[0, 0] = self._padded[:, :, 0]
+        self._blob[0, 1] = self._padded[:, :, 1]
+        self._blob[0, 2] = self._padded[:, :, 2]
+        self._blob *= 1.0 / 255.0
+
+        return self._blob, scale, (pad_w, pad_h)
 
     def postprocess(
         self,
@@ -128,14 +139,7 @@ class VehicleDetector:
         return detections
 
     def detect(self, frame: np.ndarray) -> list[dict]:
-        """Run vehicle detection on a frame.
-
-        Args:
-            frame: BGR image as numpy array
-
-        Returns:
-            List of detection dicts with class, confidence, bbox
-        """
+        """Run vehicle detection on a frame."""
         if not self.engine.is_loaded:
             return []
 

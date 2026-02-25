@@ -4,8 +4,10 @@ import androidx.compose.runtime.Immutable
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.reposcan.pro.data.location.LocationProvider
 import com.reposcan.pro.data.model.CameraStatus
 import com.reposcan.pro.data.model.Detection
+import com.reposcan.pro.domain.navigation.AutoScanController
 import com.reposcan.pro.domain.repository.IDetectionRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
@@ -22,7 +24,7 @@ data class ScanState(
     val isScanning: Boolean = false,
     val liveFeed: List<Detection> = emptyList(),
     val cameraStatus: CameraStatus = CameraStatus(),
-    val hasGps: Boolean = true,
+    val hasGps: Boolean = false,
     val totalScanned: Int = 0,
     val totalPlates: Int = 0
 )
@@ -30,6 +32,8 @@ data class ScanState(
 @HiltViewModel
 class ScanViewModel @Inject constructor(
     private val detectionRepository: IDetectionRepository,
+    private val locationProvider: LocationProvider,
+    private val autoScanController: AutoScanController,
     private val savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
@@ -37,6 +41,27 @@ class ScanViewModel @Inject constructor(
     val state: StateFlow<ScanState> = _state.asStateFlow()
 
     private var simulationJob: Job? = null
+
+    init {
+        // Observe real GPS state
+        viewModelScope.launch {
+            locationProvider.location.collect { loc ->
+                _state.update { it.copy(hasGps = loc.isActive) }
+            }
+        }
+
+        // Observe auto-scan triggers from navigation controller
+        viewModelScope.launch {
+            autoScanController.state.collect { navState ->
+                if (navState.isScanning && !_state.value.isScanning) {
+                    // Auto-scan activated by arrival detection
+                    _state.update { it.copy(isScanning = true) }
+                } else if (!navState.isScanning && navState.scanProgress == "complete") {
+                    _state.update { it.copy(isScanning = false) }
+                }
+            }
+        }
+    }
 
     fun toggleScanning() {
         val newScanning = !_state.value.isScanning

@@ -15,6 +15,7 @@ Tables affected:
 
 Non-destructive: all operations are CREATE INDEX (additive only).
 """
+
 from alembic import op
 
 # revision identifiers
@@ -34,14 +35,10 @@ def upgrade() -> None:
     op.create_index("ix_detections_session_id", "detections", ["session_id"])
 
     # Composite: agent + created_at for paginated list filtered by agent
-    op.create_index(
-        "ix_detections_agent_created", "detections", ["agent_id", "created_at"]
-    )
+    op.create_index("ix_detections_agent_created", "detections", ["agent_id", "created_at"])
 
     # Composite: session + created_at for paginated list filtered by session
-    op.create_index(
-        "ix_detections_session_created", "detections", ["session_id", "created_at"]
-    )
+    op.create_index("ix_detections_session_created", "detections", ["session_id", "created_at"])
 
     # ─── plate_reads ───
 

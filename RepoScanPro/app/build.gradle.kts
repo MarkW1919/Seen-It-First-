@@ -50,6 +50,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
@@ -99,6 +100,9 @@ dependencies {
 
     // ── Image Loading ──
     implementation("io.coil-kt:coil-compose:2.7.0")
+
+    // ── Location (FusedLocationProvider for GPS) ──
+    implementation("com.google.android.gms:play-services-location:21.3.0")
 
     // ── Coroutines ──
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")

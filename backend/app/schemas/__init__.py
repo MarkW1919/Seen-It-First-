@@ -1,23 +1,16 @@
-from app.schemas.user import (
-    UserCreate,
-    UserLogin,
-    UserResponse,
-    Token,
-    TokenRefresh,
-)
 from app.schemas.detection import (
     DetectionCreate,
-    DetectionResponse,
     DetectionList,
+    DetectionResponse,
     PlateReadCreate,
     PlateReadResponse,
 )
 from app.schemas.hotlist import (
-    HotListEntryCreate,
-    HotListEntryUpdate,
-    HotListEntryResponse,
     HotListAlertResponse,
     HotListAlertUpdate,
+    HotListEntryCreate,
+    HotListEntryResponse,
+    HotListEntryUpdate,
     HotListImport,
 )
 from app.schemas.scan_session import (
@@ -25,25 +18,32 @@ from app.schemas.scan_session import (
     ScanSessionResponse,
     ScanSessionUpdate,
 )
+from app.schemas.user import (
+    Token,
+    TokenRefresh,
+    UserCreate,
+    UserLogin,
+    UserResponse,
+)
 
 __all__ = [
-    "UserCreate",
-    "UserLogin",
-    "UserResponse",
-    "Token",
-    "TokenRefresh",
     "DetectionCreate",
-    "DetectionResponse",
     "DetectionList",
-    "PlateReadCreate",
-    "PlateReadResponse",
-    "HotListEntryCreate",
-    "HotListEntryUpdate",
-    "HotListEntryResponse",
+    "DetectionResponse",
     "HotListAlertResponse",
     "HotListAlertUpdate",
+    "HotListEntryCreate",
+    "HotListEntryResponse",
+    "HotListEntryUpdate",
     "HotListImport",
+    "PlateReadCreate",
+    "PlateReadResponse",
     "ScanSessionCreate",
     "ScanSessionResponse",
     "ScanSessionUpdate",
+    "Token",
+    "TokenRefresh",
+    "UserCreate",
+    "UserLogin",
+    "UserResponse",
 ]

@@ -8,69 +8,106 @@ Optimized for sustained 25-30 FPS on Jetson Orin Nano Super:
 - Frame-budget-aware processing with skip logic
 - Thermal monitoring with automatic throttling
 - Bounded detection history to prevent memory growth
+- Reduced per-frame object churn (cached day_dir, JPEG params)
+- Base64 frame transport (33% smaller than hex encoding)
 """
+
 import asyncio
+import base64
+import contextlib
 import json
 import logging
 import os
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import cv2
+import httpx
 import numpy as np
 import yaml
-import httpx
 
-from ai.vehicle_detector import VehicleDetector
 from ai.plate_detector import PlateDetector
 from ai.plate_ocr import PlateOCR
-from ai.vehicle_classifier import VehicleClassifier
 from ai.tracker import MultiObjectTracker
+from ai.vehicle_classifier import VehicleClassifier
+from ai.vehicle_detector import VehicleDetector
 
 logger = logging.getLogger(__name__)
 
 
 class ThermalMonitor:
-    """Monitor Jetson GPU/CPU temperature and throttle if needed."""
+    """Monitor Jetson GPU/CPU temperature with multi-zone throttling.
 
+    Three thermal zones provide graduated response:
+    - Normal (< 70C): full speed, all features enabled
+    - Warm (70-80C): skip every other frame, reduce GPU load
+    - Hot (>= 80C): skip 2 of 3 frames, aggressive power saving
+
+    Reads max temperature across all available Jetson thermal zones.
+    Hysteresis gap (resume at 65C) prevents rapid oscillation.
+    """
+
+    WARM_TEMP = 70.0
     THROTTLE_TEMP = 80.0
-    RESUME_TEMP = 70.0
-    THERMAL_ZONE = "/sys/devices/virtual/thermal/thermal_zone0/temp"
+    RESUME_TEMP = 65.0
+    THERMAL_ZONES: list[str] = [  # noqa: RUF012
+        "/sys/devices/virtual/thermal/thermal_zone0/temp",
+        "/sys/devices/virtual/thermal/thermal_zone1/temp",
+    ]
 
     def __init__(self):
-        self._throttled = False
+        self._throttle_level = 0  # 0=normal, 1=warm, 2=hot
         self._last_check = 0.0
         self._check_interval = 2.0
+        self._last_temp = 0.0
 
     @property
-    def is_throttled(self) -> bool:
+    def throttle_level(self) -> int:
+        """0=normal, 1=warm (skip some frames), 2=hot (heavy skip)."""
         now = time.monotonic()
         if now - self._last_check < self._check_interval:
-            return self._throttled
+            return self._throttle_level
         self._last_check = now
         temp = self._read_temp()
         if temp is None:
-            return False
-        if temp >= self.THROTTLE_TEMP and not self._throttled:
-            logger.warning(f"Thermal throttle engaged at {temp:.1f}C")
-            self._throttled = True
-        elif temp < self.RESUME_TEMP and self._throttled:
-            logger.info(f"Thermal throttle released at {temp:.1f}C")
-            self._throttled = False
-        return self._throttled
+            return self._throttle_level
+        self._last_temp = temp
+
+        old_level = self._throttle_level
+        if temp >= self.THROTTLE_TEMP:
+            self._throttle_level = 2
+        elif temp >= self.WARM_TEMP:
+            self._throttle_level = 1
+        elif temp < self.RESUME_TEMP:
+            self._throttle_level = 0
+
+        if self._throttle_level != old_level:
+            labels = ["normal", "warm", "hot"]
+            logger.warning(f"Thermal zone: {labels[self._throttle_level]} ({temp:.1f}C)")
+        return self._throttle_level
+
+    @property
+    def is_throttled(self) -> bool:
+        return self.throttle_level > 0
 
     @property
     def temperature(self) -> float | None:
         return self._read_temp()
 
     def _read_temp(self) -> float | None:
-        try:
-            with open(self.THERMAL_ZONE) as f:
-                return int(f.read().strip()) / 1000.0
-        except (FileNotFoundError, ValueError, PermissionError):
-            return None
+        """Read max temperature across all available thermal zones."""
+        max_temp = None
+        for zone in self.THERMAL_ZONES:
+            try:
+                with open(zone) as f:
+                    temp = int(f.read().strip()) / 1000.0
+                    if max_temp is None or temp > max_temp:
+                        max_temp = temp
+            except (FileNotFoundError, ValueError, PermissionError):
+                continue
+        return max_temp
 
 
 class InferencePipeline:
@@ -87,7 +124,7 @@ class InferencePipeline:
             logger.error(f"Invalid YAML in {config_path}: {e}")
             raise
 
-        precision = self.config.get("precision", "fp16")
+        _precision = self.config.get("precision", "fp16")
 
         pipeline_cfg = self.config.get("pipeline", {})
         self.max_fps = pipeline_cfg.get("max_fps", 30)
@@ -97,9 +134,7 @@ class InferencePipeline:
             os.environ.get("CAPTURE_DIR", pipeline_cfg.get("capture_dir", "/data/captures"))
         )
         self.thumbnail_size = tuple(pipeline_cfg.get("thumbnail_size", [320, 240]))
-        self.api_endpoint = pipeline_cfg.get(
-            "api_endpoint", "http://backend:8000/api/detections/"
-        )
+        self.api_endpoint = pipeline_cfg.get("api_endpoint", "http://backend:8000/api/detections/")
 
         self.capture_dir.mkdir(parents=True, exist_ok=True)
 
@@ -126,6 +161,16 @@ class InferencePipeline:
         # Performance counters
         self._perf_sum_ms = 0.0
         self._perf_count = 0
+
+        # Pre-allocated JPEG encode params (avoids list alloc per imencode call)
+        self._jpeg_full_params = [cv2.IMWRITE_JPEG_QUALITY, 85]
+        self._jpeg_thumb_params = [cv2.IMWRITE_JPEG_QUALITY, 70]
+        self._jpeg_plate_params = [cv2.IMWRITE_JPEG_QUALITY, 90]
+
+        # Cached day directory (refreshed once per day, not per frame)
+        self._cached_day_str = ""
+        self._cached_day_dir: Path | None = None
+        self._cached_plate_dir: Path | None = None
 
         logger.info("AI pipeline initialized")
 
@@ -171,10 +216,16 @@ class InferencePipeline:
         """
         self._frame_count += 1
 
-        # Thermal-aware frame skipping
+        # Graduated thermal-aware frame skipping
+        # Level 0: no skip (or configured skip_frames)
+        # Level 1 (warm): skip every other frame
+        # Level 2 (hot): skip 2 of 3 frames
+        thermal_level = self.thermal.throttle_level
         effective_skip = self.skip_frames
-        if self.thermal.is_throttled:
+        if thermal_level >= 2:
             effective_skip = max(effective_skip, 2)
+        elif thermal_level >= 1:
+            effective_skip = max(effective_skip, 1)
 
         if effective_skip > 0 and self._frame_count % (effective_skip + 1) != 0:
             return []
@@ -217,7 +268,7 @@ class InferencePipeline:
                 "heading": heading,
                 "speed": speed,
                 "plate_reads": [],
-                "timestamp": datetime.fromtimestamp(frame_ts, tz=timezone.utc).isoformat(),
+                "timestamp": datetime.fromtimestamp(frame_ts, tz=UTC).isoformat(),
             }
 
             # 3a. Detect plates first (higher priority than classification)
@@ -264,9 +315,7 @@ class InferencePipeline:
                     result["plate_reads"].append(plate_read)
 
             # 3c. Classify vehicle (after plates — lower priority, uses track cache)
-            classification = self.vehicle_classifier.classify(
-                vehicle_img, track_id=det_track_id
-            )
+            classification = self.vehicle_classifier.classify(vehicle_img, track_id=det_track_id)
             if classification:
                 result["vehicle_make"] = classification.get("make")
                 result["vehicle_model"] = classification.get("model")
@@ -350,18 +399,14 @@ class InferencePipeline:
             if self._api_token:
                 headers["Authorization"] = f"Bearer {self._api_token}"
 
-            await self._http_client.post(
-                self.api_endpoint, json=payload, headers=headers
-            )
+            await self._http_client.post(self.api_endpoint, json=payload, headers=headers)
         except httpx.RequestError as e:
             logger.warning(f"Failed to send detection to API: {e}")
         except Exception as e:
             logger.warning(f"Unexpected dispatch error: {e}")
 
     @staticmethod
-    def _find_track_id(
-        det_bbox: list[int], track_by_bbox: dict[tuple, int]
-    ) -> int | None:
+    def _find_track_id(det_bbox: list[int], track_by_bbox: dict[tuple, int]) -> int | None:
         """Find the track ID whose bbox best matches a detection bbox.
 
         Uses IoU matching to associate detections with confirmed tracks.
@@ -401,33 +446,40 @@ class InferencePipeline:
         y2 = min(h, y + bh)
         return frame[y1:y2, x1:x2]
 
-    def _save_capture(
-        self, frame: np.ndarray, bbox: list[int]
-    ) -> tuple[str, str]:
+    def _get_day_dir(self) -> Path:
+        """Get today's capture directory, cached to avoid per-frame strftime + mkdir."""
+        day_str = datetime.now().strftime("%Y-%m-%d")
+        if day_str != self._cached_day_str:
+            self._cached_day_str = day_str
+            self._cached_day_dir = self.capture_dir / day_str
+            self._cached_day_dir.mkdir(parents=True, exist_ok=True)
+            self._cached_plate_dir = self._cached_day_dir / "plates"
+            self._cached_plate_dir.mkdir(parents=True, exist_ok=True)
+        return self._cached_day_dir
+
+    def _save_capture(self, frame: np.ndarray, bbox: list[int]) -> tuple[str, str]:
         ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        day_dir = self.capture_dir / datetime.now().strftime("%Y-%m-%d")
-        day_dir.mkdir(parents=True, exist_ok=True)
+        day_dir = self._get_day_dir()
 
         annotated = frame.copy()
         x, y, w, h = bbox
         cv2.rectangle(annotated, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
         img_path = str(day_dir / f"{ts}_full.jpg")
-        cv2.imwrite(img_path, annotated, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        cv2.imwrite(img_path, annotated, self._jpeg_full_params)
 
         thumb = cv2.resize(annotated, self.thumbnail_size)
         thumb_path = str(day_dir / f"{ts}_thumb.jpg")
-        cv2.imwrite(thumb_path, thumb, [cv2.IMWRITE_JPEG_QUALITY, 70])
+        cv2.imwrite(thumb_path, thumb, self._jpeg_thumb_params)
 
         return img_path, thumb_path
 
     def _save_plate_image(self, plate_img: np.ndarray) -> str:
         ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        day_dir = self.capture_dir / datetime.now().strftime("%Y-%m-%d") / "plates"
-        day_dir.mkdir(parents=True, exist_ok=True)
+        self._get_day_dir()  # ensure plate dir exists
 
-        path = str(day_dir / f"{ts}_plate.jpg")
-        cv2.imwrite(path, plate_img, [cv2.IMWRITE_JPEG_QUALITY, 90])
+        path = str(self._cached_plate_dir / f"{ts}_plate.jpg")
+        cv2.imwrite(path, plate_img, self._jpeg_plate_params)
         return path
 
     def set_api_token(self, token: str):
@@ -440,10 +492,8 @@ class InferencePipeline:
     async def cleanup(self):
         if self._dispatcher_task:
             self._dispatcher_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._dispatcher_task
-            except asyncio.CancelledError:
-                pass
         await self._http_client.aclose()
 
         # Release GPU resources
@@ -489,9 +539,12 @@ async def main():
                 continue
 
             frame_data = json.loads(message["data"])
-            frame_bytes = np.frombuffer(
-                bytes.fromhex(frame_data["frame"]), dtype=np.uint8
-            )
+            raw = frame_data["frame"]
+            # Support both base64 (new) and hex (legacy) encoding
+            try:
+                frame_bytes = np.frombuffer(base64.b64decode(raw), dtype=np.uint8)
+            except Exception:
+                frame_bytes = np.frombuffer(bytes.fromhex(raw), dtype=np.uint8)
             frame = cv2.imdecode(frame_bytes, cv2.IMREAD_COLOR)
 
             if frame is not None:

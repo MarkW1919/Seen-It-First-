@@ -1,8 +1,8 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Index, String, Float, Boolean, DateTime, ForeignKey, Text, func
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, String, Text, func
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -16,9 +16,7 @@ class HotListEntry(Base):
         Index("ix_hotlist_active_plate_expires", "is_active", "plate_text", "expires_at"),
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     plate_text: Mapped[str] = mapped_column(String(20), index=True)
     plate_state: Mapped[str] = mapped_column(String(5), nullable=True)
 
@@ -51,15 +49,11 @@ class HotListEntry(Base):
     extra: Mapped[dict] = mapped_column(JSONB, default=dict)
 
     # Timestamps
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
-    expires_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Relationships
     alerts = relationship(
@@ -76,9 +70,7 @@ class HotListAlert(Base):
         Index("ix_hotlist_alerts_entry_created", "hotlist_entry_id", "created_at"),
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     hotlist_entry_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("hotlist_entries.id", ondelete="CASCADE"), index=True
     )
@@ -100,17 +92,11 @@ class HotListAlert(Base):
     status: Mapped[str] = mapped_column(
         String(30), default="new"
     )  # new, acknowledged, dispatched, resolved, false_positive
-    acknowledged_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    resolved_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    acknowledged_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
     notes: Mapped[str] = mapped_column(Text, nullable=True)
 
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships
     hotlist_entry = relationship("HotListEntry", back_populates="alerts")

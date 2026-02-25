@@ -3,9 +3,10 @@
 Optimized for sustained 25-30 FPS with:
 - Hardware-accelerated GStreamer pipeline (sensor exposure/gain applied)
 - Timestamped frame delivery for pipeline synchronization
-- Thread-safe frame buffer with atomic swap
+- Double-buffered atomic swap (eliminates per-read frame.copy())
 - Backoff on capture failure prevents busy-wait
 """
+
 import logging
 import threading
 import time
@@ -20,11 +21,12 @@ logger = logging.getLogger(__name__)
 @dataclass
 class TimestampedFrame:
     """Frame with capture-time metadata for pipeline synchronization."""
+
     frame: np.ndarray
-    timestamp: float        # monotonic capture time (seconds)
-    wall_time: float        # wall-clock time (epoch seconds)
-    sequence: int           # monotonically increasing frame counter
-    fps_actual: float       # measured capture FPS
+    timestamp: float  # monotonic capture time (seconds)
+    wall_time: float  # wall-clock time (epoch seconds)
+    sequence: int  # monotonically increasing frame counter
+    fps_actual: float  # measured capture FPS
 
 
 class VideoCapture:
@@ -40,10 +42,15 @@ class VideoCapture:
         self.cam_type = cam_cfg.get("type", "csi")
 
         self._cap: cv2.VideoCapture | None = None
-        self._latest_frame: TimestampedFrame | None = None
         self._lock = threading.Lock()
         self._running = False
         self._thread: threading.Thread | None = None
+
+        # Double-buffer: capture thread writes to _write_frame, then swaps
+        # the reference atomically. Readers get a stable reference that won't
+        # be overwritten, eliminating the need for frame.copy() on every read.
+        self._read_frame: TimestampedFrame | None = None
+        self._write_frame: TimestampedFrame | None = None
 
         # Thread-safe counters
         self._sequence = 0
@@ -75,8 +82,8 @@ class VideoCapture:
                 "pipeline_optimized",
                 f"nvarguscamerasrc sensor-id={self.source} "
                 f"sensor-mode={sensor_mode} "
-                f"exposuretimerange=\"{int(exp_lo * 1e9)} {int(exp_hi * 1e9)}\" "
-                f"gainrange=\"{gain_lo} {gain_hi}\" "
+                f'exposuretimerange="{int(exp_lo * 1e9)} {int(exp_hi * 1e9)}" '
+                f'gainrange="{gain_lo} {gain_hi}" '
                 f"wbmode={wb_mode} aelock={ae_lock} "
                 f"! video/x-raw(memory:NVMM),width={self.width},height={self.height},"
                 f"framerate={self.fps}/1,format=NV12 "
@@ -136,17 +143,15 @@ class VideoCapture:
         )
         self._thread.start()
 
-        logger.info(
-            f"Camera started: {self.width}x{self.height} @ {self.fps}fps "
-            f"({self.cam_type})"
-        )
+        logger.info(f"Camera started: {self.width}x{self.height} @ {self.fps}fps ({self.cam_type})")
         return True
 
     def _capture_loop(self):
         """Background thread for continuous frame capture.
 
-        Timestamps each frame at acquisition time and atomically
-        swaps the latest frame buffer.
+        Uses double-buffering: writes to _write_frame, then atomically
+        swaps the reference under lock. Readers get the stable _read_frame
+        reference without needing to copy the frame data.
         """
         while self._running:
             if self._cap is None:
@@ -181,7 +186,8 @@ class VideoCapture:
                 self._fps_frame_count = 0
                 self._fps_timer = capture_mono
 
-            stamped = TimestampedFrame(
+            # Build new frame into write buffer, then swap under lock
+            new_frame = TimestampedFrame(
                 frame=frame,
                 timestamp=capture_mono,
                 wall_time=capture_wall,
@@ -190,27 +196,32 @@ class VideoCapture:
             )
 
             with self._lock:
-                self._latest_frame = stamped
+                # Atomic swap: old _read_frame becomes available for GC,
+                # new frame becomes the stable read target
+                self._write_frame = self._read_frame
+                self._read_frame = new_frame
 
     def read(self) -> np.ndarray | None:
-        """Read the latest frame (non-blocking, returns a copy)."""
+        """Read the latest frame (non-blocking).
+
+        Returns the frame from the stable read buffer. The caller should
+        treat this as read-only; it will not be overwritten by the capture
+        thread because of double-buffering.
+        """
         with self._lock:
-            if self._latest_frame is not None:
-                return self._latest_frame.frame.copy()
-            return None
+            rf = self._read_frame
+        if rf is not None:
+            return rf.frame
+        return None
 
     def read_timestamped(self) -> TimestampedFrame | None:
-        """Read the latest timestamped frame for pipeline synchronization."""
+        """Read the latest timestamped frame for pipeline synchronization.
+
+        Returns the stable read buffer directly (no copy needed due to
+        double-buffering). The capture thread writes to a separate buffer.
+        """
         with self._lock:
-            if self._latest_frame is not None:
-                return TimestampedFrame(
-                    frame=self._latest_frame.frame.copy(),
-                    timestamp=self._latest_frame.timestamp,
-                    wall_time=self._latest_frame.wall_time,
-                    sequence=self._latest_frame.sequence,
-                    fps_actual=self._latest_frame.fps_actual,
-                )
-            return None
+            return self._read_frame
 
     @property
     def is_running(self) -> bool:

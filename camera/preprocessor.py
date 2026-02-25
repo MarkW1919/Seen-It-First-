@@ -4,6 +4,7 @@ Optimized for 25-30 FPS throughput:
 - Replaced fastNlMeansDenoisingColored (~40ms CPU) with bilateral filter (~3ms)
 - CLAHE applied only to luminance channel (single-channel operation)
 """
+
 import cv2
 import numpy as np
 
@@ -21,9 +22,7 @@ class ImagePreprocessor:
         self.use_sharpen = cfg.get("sharpen", False)
 
         if self.use_clahe:
-            self._clahe = cv2.createCLAHE(
-                clipLimit=self.clahe_clip, tileGridSize=self.clahe_grid
-            )
+            self._clahe = cv2.createCLAHE(clipLimit=self.clahe_clip, tileGridSize=self.clahe_grid)
 
     def process(self, frame: np.ndarray) -> np.ndarray:
         """Apply preprocessing pipeline to a frame.
@@ -48,11 +47,12 @@ class ImagePreprocessor:
         return result
 
     def _apply_clahe(self, frame: np.ndarray) -> np.ndarray:
-        """Apply CLAHE contrast enhancement to luminance channel only."""
+        """Apply CLAHE contrast enhancement to luminance channel only.
+
+        Uses in-place L-channel replacement to avoid intermediate list alloc.
+        """
         lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
-        channels = list(cv2.split(lab))
-        channels[0] = self._clahe.apply(channels[0])
-        lab = cv2.merge(channels)
+        lab[:, :, 0] = self._clahe.apply(lab[:, :, 0])
         return cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
 
     def _denoise(self, frame: np.ndarray) -> np.ndarray:
@@ -83,7 +83,7 @@ class ImagePreprocessor:
         else:
             gray = plate_img
 
-        h, w = gray.shape[:2]
+        _h, w = gray.shape[:2]
         if w < 200:
             scale = 200 / w
             gray = cv2.resize(

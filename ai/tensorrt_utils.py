@@ -6,6 +6,7 @@ Optimized for sustained 25-30 FPS with:
 - Automatic ONNX-to-TensorRT engine caching
 - Proper GPU memory lifecycle management
 """
+
 import logging
 import os
 from pathlib import Path
@@ -56,14 +57,11 @@ class TRTEngine:
         engine_exists = os.path.exists(self.engine_path)
         onnx_exists = os.path.exists(self.onnx_path)
 
-        # Try TensorRT first (Jetson)
-        if engine_exists:
-            if self._load_trt_engine():
-                return
-        elif onnx_exists:
-            # Auto-convert ONNX to TensorRT engine
-            if self._try_auto_convert():
-                return
+        # Try TensorRT first (Jetson), then auto-convert ONNX to TRT
+        if (engine_exists and self._load_trt_engine()) or (
+            onnx_exists and self._try_auto_convert()
+        ):
+            return
 
         # Fallback to ONNX Runtime
         if onnx_exists:
@@ -76,9 +74,9 @@ class TRTEngine:
     def _load_trt_engine(self) -> bool:
         """Load a pre-built TensorRT engine file."""
         try:
-            import tensorrt as trt
-            import pycuda.driver as cuda
             import pycuda.autoinit  # noqa: F401
+            import pycuda.driver as cuda
+            import tensorrt as trt
 
             trt_logger = trt.Logger(trt.Logger.WARNING)
             with open(self.engine_path, "rb") as f:
@@ -133,9 +131,7 @@ class TRTEngine:
             import onnxruntime as ort
 
             providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
-            self._session = ort.InferenceSession(
-                self.onnx_path, providers=providers
-            )
+            self._session = ort.InferenceSession(self.onnx_path, providers=providers)
             self._backend = "onnxrt"
             logger.info(f"Loaded ONNX model: {self.onnx_path}")
         except Exception as e:
@@ -163,9 +159,7 @@ class TRTEngine:
             if mode == "INPUT":
                 self._input_nbytes = input_data.nbytes
                 self._input_buf_device = cuda.mem_alloc(input_data.nbytes)
-                self._trt_context.set_tensor_address(
-                    name, int(self._input_buf_device)
-                )
+                self._trt_context.set_tensor_address(name, int(self._input_buf_device))
             else:
                 shape = self._trt_engine.get_tensor_shape(name)
                 host_buf = np.empty(shape, dtype=dtype)
@@ -184,7 +178,7 @@ class TRTEngine:
     def _free_buffers(self):
         """Explicitly free all GPU memory."""
         try:
-            import pycuda.driver as cuda  # noqa: F811
+            import pycuda.driver  # noqa: F401
         except ImportError:
             return
 
@@ -219,7 +213,13 @@ class TRTEngine:
             raise RuntimeError("No model loaded")
 
     def _infer_trt(self, input_data: np.ndarray) -> list[np.ndarray]:
-        """TensorRT inference with pre-allocated persistent buffers."""
+        """TensorRT inference with pre-allocated persistent buffers.
+
+        Returns the pre-allocated host buffers directly (no copy).
+        These are overwritten on the next infer() call, so callers
+        that need persistence must copy the arrays they need.
+        This eliminates ~0.5ms of per-frame numpy allocation + memcpy.
+        """
         import pycuda.driver as cuda
 
         input_data = np.ascontiguousarray(input_data, dtype=np.float32)
@@ -229,32 +229,26 @@ class TRTEngine:
             self._allocate_buffers(input_data)
 
         # Copy input to GPU (async)
-        cuda.memcpy_htod_async(
-            self._input_buf_device, input_data, self._cuda_stream
-        )
+        cuda.memcpy_htod_async(self._input_buf_device, input_data, self._cuda_stream)
 
         # Execute inference (async)
         self._trt_context.execute_async_v3(self._cuda_stream.handle)
 
-        # Copy outputs from GPU (async)
-        results = []
+        # Copy outputs from GPU into pre-allocated host buffers (async)
         for host_buf, device_buf in zip(
-            self._output_bufs_host, self._output_bufs_device
+            self._output_bufs_host, self._output_bufs_device, strict=False
         ):
             cuda.memcpy_dtoh_async(host_buf, device_buf, self._cuda_stream)
-            results.append(host_buf.copy())
 
         # Single synchronize after all async operations
         self._cuda_stream.synchronize()
 
-        return results
+        return self._output_bufs_host
 
     def _infer_onnx(self, input_data: np.ndarray) -> list[np.ndarray]:
         """ONNX Runtime inference fallback."""
         input_name = self._session.get_inputs()[0].name
-        results = self._session.run(
-            None, {input_name: input_data.astype(np.float32)}
-        )
+        results = self._session.run(None, {input_name: input_data.astype(np.float32)})
         return results
 
     def close(self):
@@ -288,9 +282,7 @@ def convert_onnx_to_tensorrt(
 
         logger_trt = trt.Logger(trt.Logger.INFO)
         builder = trt.Builder(logger_trt)
-        network = builder.create_network(
-            1 << int(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH)
-        )
+        network = builder.create_network(1 << int(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH))
         parser = trt.OnnxParser(network, logger_trt)
 
         with open(onnx_path, "rb") as f:
@@ -300,9 +292,7 @@ def convert_onnx_to_tensorrt(
                 raise RuntimeError("Failed to parse ONNX model")
 
         config = builder.create_builder_config()
-        config.set_memory_pool_limit(
-            trt.MemoryPoolType.WORKSPACE, int(workspace_gb * (1 << 30))
-        )
+        config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, int(workspace_gb * (1 << 30)))
 
         if fp16 and builder.platform_has_fast_fp16:
             config.set_flag(trt.BuilderFlag.FP16)
