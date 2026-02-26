@@ -10,12 +10,11 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.config import get_settings
 from app.models.hotlist import HotListAlert, HotListEntry
 from app.schemas.hotlist import HotListAlertUpdate, HotListEntryCreate, HotListEntryUpdate
+from app.services.redis_client import get_redis
 
 logger = logging.getLogger(__name__)
-settings = get_settings()
 
 # ─── Redis-backed O(1) Hotlist Cache ───
 
@@ -37,11 +36,11 @@ class HotlistCache:
         self._lock = asyncio.Lock()
 
     async def connect(self) -> None:
-        self._redis = redis.from_url(settings.redis_url, decode_responses=True)
+        self._redis = await get_redis()
 
     async def disconnect(self) -> None:
-        if self._redis:
-            await self._redis.close()
+        # Connection lifecycle managed by redis_client module
+        self._redis = None
 
     async def load_from_db(self, db: AsyncSession) -> None:
         """Bulk-load all active, non-expired plate texts into the Redis set."""

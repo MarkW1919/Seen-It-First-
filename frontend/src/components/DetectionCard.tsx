@@ -1,4 +1,5 @@
 import type { Detection } from "../types";
+import { formatVehicleDescription } from "../utils/format";
 import PlateDisplay from "./PlateDisplay";
 
 interface DetectionCardProps {
@@ -15,14 +16,7 @@ export default function DetectionCard({
   onClick,
 }: DetectionCardProps) {
   const plate = detection.plate_reads[0];
-  const vehicleDesc = [
-    detection.vehicle_year,
-    detection.vehicle_color,
-    detection.vehicle_make,
-    detection.vehicle_model,
-  ]
-    .filter(Boolean)
-    .join(" ");
+  const vehicleDesc = formatVehicleDescription(detection);
 
   const timeStr = new Date(detection.created_at).toLocaleTimeString();
   const dateStr = new Date(detection.created_at).toLocaleDateString();

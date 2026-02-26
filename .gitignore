@@ -63,3 +63,13 @@ htmlcov/
 # Captures & temp data
 captures/
 tmp/
+
+# Ruff cache
+.ruff_cache/
+
+# Root-level lock file (not a real project; frontend has its own)
+/package-lock.json
+
+# Android build artifacts
+RepoScanPro.zip
+RepoScanPro/local.properties

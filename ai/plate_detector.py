@@ -13,6 +13,7 @@ import cv2
 import numpy as np
 
 from ai.tensorrt_utils import TRTEngine
+from ai.utils import LetterboxPreprocessor
 
 logger = logging.getLogger(__name__)
 
@@ -166,31 +167,10 @@ class PlateDetector:
             onnx_path=config.get("onnx_path"),
         )
 
-        # Pre-allocated letterbox buffer
-        target_h, target_w = self.input_size
-        self._padded = np.full((target_h, target_w, 3), 114, dtype=np.uint8)
-        self._blob = np.empty((1, 3, target_h, target_w), dtype=np.float32)
+        self._letterbox = LetterboxPreprocessor(self.input_size)
 
     def preprocess(self, frame: np.ndarray) -> tuple[np.ndarray, float, tuple[int, int]]:
-        h, w = frame.shape[:2]
-        target_h, target_w = self.input_size
-        scale = min(target_w / w, target_h / h)
-        new_w, new_h = int(w * scale), int(h * scale)
-        pad_w, pad_h = (target_w - new_w) // 2, (target_h - new_h) // 2
-
-        resized = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
-
-        # Reuse pre-allocated padded buffer
-        self._padded[:] = 114
-        self._padded[pad_h : pad_h + new_h, pad_w : pad_w + new_w] = resized
-
-        # Channel-separated copy + normalize
-        self._blob[0, 0] = self._padded[:, :, 0]
-        self._blob[0, 1] = self._padded[:, :, 1]
-        self._blob[0, 2] = self._padded[:, :, 2]
-        self._blob *= 1.0 / 255.0
-
-        return self._blob, scale, (pad_w, pad_h)
+        return self._letterbox.preprocess(frame)
 
     def postprocess(
         self,

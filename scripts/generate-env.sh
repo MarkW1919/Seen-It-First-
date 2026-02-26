@@ -12,6 +12,7 @@ fi
 POSTGRES_PASSWORD=$(openssl rand -base64 32 | tr -d '/+=' | head -c 32)
 SECRET_KEY=$(openssl rand -hex 64)
 GRAFANA_PASSWORD=$(openssl rand -base64 16 | tr -d '/+=' | head -c 16)
+REDIS_PASSWORD=$(openssl rand -base64 32 | tr -d '/+=' | head -c 32)
 
 cat > "$ENV_FILE" <<EOF
 # ─── RepoScan Pro Environment Configuration ───
@@ -23,15 +24,18 @@ POSTGRES_PORT=5432
 POSTGRES_USER=reposcan
 POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
 POSTGRES_DB=reposcan
+POSTGRES_SSLMODE=require
 
 # Redis
 REDIS_HOST=redis
 REDIS_PORT=6379
+REDIS_PASSWORD=${REDIS_PASSWORD}
 
 # Backend
 SECRET_KEY=${SECRET_KEY}
 API_HOST=0.0.0.0
 API_PORT=8000
+DEBUG=false
 CORS_ORIGINS=http://localhost:5173,http://localhost:3000
 
 # AI Pipeline

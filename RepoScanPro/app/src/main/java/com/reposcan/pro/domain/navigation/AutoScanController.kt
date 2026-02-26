@@ -1,9 +1,9 @@
 package com.reposcan.pro.domain.navigation
 
-import android.location.Location
 import com.reposcan.pro.data.location.LocationProvider
 import com.reposcan.pro.data.model.RouteResponse
 import com.reposcan.pro.data.remote.ApiService
+import com.reposcan.pro.util.GeoUtils
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -253,9 +253,5 @@ class AutoScanController @Inject constructor(
     private fun distanceBetween(
         lat1: Double, lng1: Double,
         lat2: Double, lng2: Double
-    ): Float {
-        val results = FloatArray(1)
-        Location.distanceBetween(lat1, lng1, lat2, lng2, results)
-        return results[0]
-    }
+    ): Float = GeoUtils.distanceBetween(lat1, lng1, lat2, lng2)
 }

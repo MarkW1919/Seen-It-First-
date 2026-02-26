@@ -11,7 +11,8 @@ export default function LiveScanView() {
   const capture = useCapture();
   const nightMode = useNightMode();
 
-  const currentStatus = camStatus || cameraStatus;
+  // Prefer API data when available, fall back to store (populated by demo mode)
+  const currentStatus = camStatus ?? cameraStatus;
 
   return (
     <div className="flex flex-col h-full">
