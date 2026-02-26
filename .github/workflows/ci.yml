@@ -52,7 +52,7 @@ jobs:
       POSTGRES_SSLMODE: disable
     services:
       postgres:
-        image: postgres:15
+        image: postgis/postgis:15-3.4
         env:
           POSTGRES_USER: reposcan
           POSTGRES_PASSWORD: ci-test-password
