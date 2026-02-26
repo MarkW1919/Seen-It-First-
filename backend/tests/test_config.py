@@ -51,7 +51,7 @@ def test_sync_database_url_sslmode_param():
 
 
 def test_redis_url_without_password():
-    s = Settings(postgres_password="pw", secret_key="sk", redis_password="")
+    s = Settings(postgres_password="pw", secret_key="sk", redis_host="redis", redis_password="")
     assert s.redis_url == "redis://redis:6379/0"
 
 
