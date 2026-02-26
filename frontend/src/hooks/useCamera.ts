@@ -9,16 +9,6 @@ export function useCameraStatus() {
   });
 }
 
-export function usePTZCommand() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (cmd: { pan?: number; tilt?: number; zoom?: number }) =>
-      api.sendPTZCommand(cmd),
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: ["camera", "status"] }),
-  });
-}
-
 export function useNightMode() {
   const queryClient = useQueryClient();
   return useMutation({

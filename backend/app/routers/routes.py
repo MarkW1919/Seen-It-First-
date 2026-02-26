@@ -2,67 +2,17 @@ import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
+from app.middleware.auth import get_current_user
 from app.models.route import Route, RouteStop
 from app.models.user import User
-from app.routers.auth import get_current_user
+from app.schemas.route import RouteCreate, RouteResponse, StopResponse, StopUpdate
 
 router = APIRouter(prefix="/api/routes", tags=["routes"])
-
-
-# ── Schemas ──────────────────────────────────────────────────────────────────
-
-
-class StopCreate(BaseModel):
-    address: str
-    latitude: float
-    longitude: float
-    geofence_radius_m: float = Field(default=50.0, ge=10.0, le=500.0)
-
-
-class RouteCreate(BaseModel):
-    name: str | None = None
-    stops: list[StopCreate] = Field(..., min_length=1, max_length=200)
-
-
-class StopResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: str
-    order_index: int
-    address: str
-    latitude: float
-    longitude: float
-    geofence_radius_m: float
-    status: str
-    arrived_at: str | None = None
-    scan_started_at: str | None = None
-    completed_at: str | None = None
-    plates_found: int = 0
-    notes: str | None = None
-
-
-class RouteResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: str
-    name: str | None
-    status: str
-    current_stop_index: int
-    total_stops: int
-    created_at: str
-    completed_at: str | None = None
-    stops: list[StopResponse] = []
-
-
-class StopUpdate(BaseModel):
-    notes: str | None = None
-    plates_found: int | None = None
 
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
@@ -206,12 +156,7 @@ async def complete_stop(
         if body.notes is not None:
             stop.notes = body.notes
 
-    # Auto-advance to next pending stop
-    next_stop = None
-    for s in route.stops:
-        if s.order_index > stop_index and s.status == "pending":
-            next_stop = s
-            break
+    next_stop = _find_next_pending_stop(route, stop_index)
 
     if next_stop:
         route.current_stop_index = next_stop.order_index
@@ -243,11 +188,7 @@ async def skip_stop(
     stop.status = "skipped"
     stop.completed_at = datetime.now(UTC)
 
-    next_stop = None
-    for s in route.stops:
-        if s.order_index > stop_index and s.status == "pending":
-            next_stop = s
-            break
+    next_stop = _find_next_pending_stop(route, stop_index)
 
     if next_stop:
         route.current_stop_index = next_stop.order_index
@@ -291,6 +232,14 @@ def _get_stop_by_index(route: Route, index: int) -> RouteStop:
         if stop.order_index == index:
             return stop
     raise HTTPException(status.HTTP_404_NOT_FOUND, f"Stop index {index} not found")
+
+
+def _find_next_pending_stop(route: Route, after_index: int) -> RouteStop | None:
+    """Find the next stop with status 'pending' after the given index."""
+    for s in route.stops:
+        if s.order_index > after_index and s.status == "pending":
+            return s
+    return None
 
 
 def _route_to_response(route: Route) -> RouteResponse:

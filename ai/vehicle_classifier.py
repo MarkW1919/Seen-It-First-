@@ -20,6 +20,7 @@ import cv2
 import numpy as np
 
 from ai.tensorrt_utils import TRTEngine
+from ai.utils import softmax
 
 logger = logging.getLogger(__name__)
 
@@ -243,7 +244,7 @@ class VehicleClassifier:
 
         # Make classification
         if len(outputs) >= 1 and self.make_labels:
-            probs = self._softmax(outputs[0].squeeze())
+            probs = softmax(outputs[0].squeeze())
             idx = int(np.argmax(probs))
             if probs[idx] >= self.make_conf_thresh and idx < len(self.make_labels):
                 result["make"] = self.make_labels[idx]
@@ -251,14 +252,14 @@ class VehicleClassifier:
 
         # Model classification
         if len(outputs) >= 2 and self.model_labels:
-            probs = self._softmax(outputs[1].squeeze())
+            probs = softmax(outputs[1].squeeze())
             idx = int(np.argmax(probs))
             if probs[idx] >= self.model_conf_thresh and idx < len(self.model_labels):
                 result["model"] = self.model_labels[idx]
 
         # Year classification
         if len(outputs) >= 3 and self.year_labels:
-            probs = self._softmax(outputs[2].squeeze())
+            probs = softmax(outputs[2].squeeze())
             idx = int(np.argmax(probs))
             if probs[idx] >= self.year_conf_thresh and idx < len(self.year_labels):
                 try:
@@ -270,7 +271,7 @@ class VehicleClassifier:
 
         # Color classification (with confidence threshold — was missing)
         if len(outputs) >= 4:
-            probs = self._softmax(outputs[3].squeeze())
+            probs = softmax(outputs[3].squeeze())
             idx = int(np.argmax(probs))
             if probs[idx] >= self.color_conf_thresh and idx < len(self.color_labels):
                 result["color"] = self.color_labels[idx]
@@ -308,8 +309,3 @@ class VehicleClassifier:
             sizes,
         )
         return [flat]
-
-    @staticmethod
-    def _softmax(x: np.ndarray) -> np.ndarray:
-        e = np.exp(x - np.max(x))
-        return e / e.sum()

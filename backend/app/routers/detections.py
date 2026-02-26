@@ -2,7 +2,7 @@ import logging
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/detections", tags=["detections"])
 
 
-@router.post("/", response_model=DetectionResponse, status_code=201)
+@router.post("/", response_model=DetectionResponse, status_code=status.HTTP_201_CREATED)
 async def create_new_detection(
     data: DetectionCreate,
     db: AsyncSession = Depends(get_db),

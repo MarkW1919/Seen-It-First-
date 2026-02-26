@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useGeolocation } from "../hooks/useGeolocation";
 import { useAppStore } from "../store";
 import { api } from "../services/api";
+import { formatVehicleDescription } from "../utils/format";
 
 // Fix Leaflet default marker icon
 import iconUrl from "leaflet/dist/images/marker-icon.png";
@@ -165,9 +166,7 @@ export default function MapView() {
                   <strong>{det.plate_reads[0].plate_text}</strong>
                 )}
                 <br />
-                {[det.vehicle_color, det.vehicle_make, det.vehicle_model]
-                  .filter(Boolean)
-                  .join(" ")}
+                {formatVehicleDescription(det)}
                 <br />
                 <small>{new Date(det.created_at).toLocaleString()}</small>
               </div>

@@ -103,22 +103,6 @@ export interface HotListAlert {
   hotlist_entry: HotListEntry | null;
 }
 
-// ─── Scan Session ───
-
-export interface ScanSession {
-  id: string;
-  agent_id: string;
-  name: string | null;
-  status: "active" | "paused" | "completed";
-  total_detections: number;
-  total_plates: number;
-  total_alerts: number;
-  distance_miles: number;
-  started_at: string;
-  ended_at: string | null;
-  config: Record<string, unknown>;
-}
-
 // ─── Camera ───
 
 export interface CameraStatus {
@@ -152,22 +136,7 @@ export interface WSAlert {
   timestamp: string;
 }
 
-export interface WSDetection {
-  type: "detection";
-  detection_id: string;
-  plate_text: string | null;
-  vehicle: {
-    type?: string;
-    color?: string;
-    make?: string;
-    model?: string;
-    year?: number;
-  };
-  location: { lat?: number; lng?: number };
-  timestamp: string;
-}
-
-export type WSMessage = WSAlert | WSDetection | { type: string; data?: unknown; timestamp: string };
+export type WSMessage = WSAlert | { type: string; data?: unknown; timestamp: string };
 
 // ─── Navigation ───
 

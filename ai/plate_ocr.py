@@ -10,6 +10,7 @@ import cv2
 import numpy as np
 
 from ai.tensorrt_utils import TRTEngine
+from ai.utils import compute_iou, softmax
 
 logger = logging.getLogger(__name__)
 
@@ -210,7 +211,7 @@ class _PartialReadMerger:
         best_key = None
         best_iou = 0.0
         for key, entry in self._partials.items():
-            iou = self._compute_iou(bbox, entry["bbox"])
+            iou = compute_iou(bbox, entry["bbox"])
             if iou > self._iou_thresh and iou > best_iou:
                 best_iou = iou
                 best_key = key
@@ -244,19 +245,6 @@ class _PartialReadMerger:
         }
         return text, confidence
 
-    @staticmethod
-    def _compute_iou(a: list[int], b: list[int]) -> float:
-        ax1, ay1, aw, ah = a
-        bx1, by1, bw, bh = b
-        ax2, ay2 = ax1 + aw, ay1 + ah
-        bx2, by2 = bx1 + bw, by1 + bh
-
-        ix1, iy1 = max(ax1, bx1), max(ay1, by1)
-        ix2, iy2 = min(ax2, bx2), min(ay2, by2)
-
-        inter = max(0, ix2 - ix1) * max(0, iy2 - iy1)
-        union = aw * ah + bw * bh - inter
-        return inter / max(union, 1e-6)
 
 
 def _apply_confusion_correction(text: str, pattern: re.Pattern | None = None) -> str:
@@ -536,7 +524,3 @@ class PlateOCR:
             "char_confidences": [round(c, 3) for c in char_confs],
         }
 
-    @staticmethod
-    def _softmax(x: np.ndarray) -> np.ndarray:
-        e = np.exp(x - np.max(x))
-        return e / e.sum()

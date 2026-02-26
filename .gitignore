@@ -63,3 +63,10 @@ htmlcov/
 # Captures & temp data
 captures/
 tmp/
+
+# Ruff cache
+.ruff_cache/
+
+# Android build artifacts
+RepoScanPro.zip
+RepoScanPro/local.properties

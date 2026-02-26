@@ -12,6 +12,7 @@ from app.database import async_session, init_db
 from app.routers import auth, camera, detections, hotlist, plates, routes, search, system
 from app.services.alert_service import alert_service
 from app.services.hotlist_service import hotlist_cache
+from app.services.redis_client import close_redis
 from app.websocket.handler import redis_listener, websocket_endpoint
 
 settings = get_settings()
@@ -41,6 +42,7 @@ async def lifespan(app: FastAPI):
         await listener_task
     await hotlist_cache.disconnect()
     await alert_service.disconnect()
+    await close_redis()
     logger.info("RepoScan Pro backend stopped.")
 
 

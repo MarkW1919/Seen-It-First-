@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../services/api";
+import { formatVehicleDescription } from "../utils/format";
 import PlateDisplay from "./PlateDisplay";
 import type { HotListEntry } from "../types";
 
@@ -240,9 +241,7 @@ export default function HotListManager() {
             {/* Vehicle info */}
             {(entry.vehicle_make || entry.vehicle_model) && (
               <p className="text-sm text-slate-300 mt-2">
-                {[entry.vehicle_year, entry.vehicle_color, entry.vehicle_make, entry.vehicle_model]
-                  .filter(Boolean)
-                  .join(" ")}
+                {formatVehicleDescription(entry)}
               </p>
             )}
 

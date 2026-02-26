@@ -6,9 +6,7 @@ from datetime import UTC, datetime
 
 import redis.asyncio as redis
 
-from app.config import get_settings
-
-settings = get_settings()
+from app.services.redis_client import get_redis
 
 
 class AlertService:
@@ -18,11 +16,11 @@ class AlertService:
         self._redis: redis.Redis | None = None
 
     async def connect(self):
-        self._redis = redis.from_url(settings.redis_url, decode_responses=True)
+        self._redis = await get_redis()
 
     async def disconnect(self):
-        if self._redis:
-            await self._redis.close()
+        # Connection lifecycle managed by redis_client module
+        self._redis = None
 
     async def publish_alert(
         self,
