@@ -89,6 +89,9 @@ jobs:
     name: Docker Build Check
     runs-on: ubuntu-latest
     needs: [frontend-lint-test, backend-lint, backend-test]
+    env:
+      POSTGRES_PASSWORD: dummy
+      GRAFANA_PASSWORD: dummy
     steps:
       - uses: actions/checkout@v4
       - run: docker compose build frontend backend
