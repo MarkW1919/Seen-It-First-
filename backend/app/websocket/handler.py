@@ -144,7 +144,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str | None = None) -> 
     client_id = "anonymous"
     if token:
         payload = decode_token(token)
-        if payload and payload.get("type") == "access":
+        if payload and payload.get("type") == "access" and payload.get("sub"):
             client_id = payload["sub"]
         else:
             await websocket.close(code=4001, reason="Invalid token")

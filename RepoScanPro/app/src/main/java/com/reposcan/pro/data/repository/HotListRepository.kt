@@ -16,7 +16,9 @@ class HotListRepository @Inject constructor(
         return try {
             val response = apiService.getHotListEntries(activeOnly)
             if (response.isSuccessful) {
-                Result.success(response.body()!!)
+                val entries = response.body()
+                    ?: return Result.failure(Exception("Hot list response body was null"))
+                Result.success(entries)
             } else {
                 Result.failure(Exception("Failed to fetch hot list: ${response.code()}"))
             }
@@ -29,7 +31,9 @@ class HotListRepository @Inject constructor(
         return try {
             val response = apiService.createHotListEntry(data)
             if (response.isSuccessful) {
-                Result.success(response.body()!!)
+                val entry = response.body()
+                    ?: return Result.failure(Exception("Create entry response body was null"))
+                Result.success(entry)
             } else {
                 Result.failure(Exception("Failed to create entry: ${response.code()}"))
             }
@@ -55,7 +59,9 @@ class HotListRepository @Inject constructor(
         return try {
             val response = apiService.getAlerts(status)
             if (response.isSuccessful) {
-                Result.success(response.body()!!)
+                val alerts = response.body()
+                    ?: return Result.failure(Exception("Alerts response body was null"))
+                Result.success(alerts)
             } else {
                 Result.failure(Exception("Failed to fetch alerts: ${response.code()}"))
             }
@@ -68,7 +74,9 @@ class HotListRepository @Inject constructor(
         return try {
             val response = apiService.updateAlert(id, mapOf("status" to "acknowledged"))
             if (response.isSuccessful) {
-                Result.success(response.body()!!)
+                val alert = response.body()
+                    ?: return Result.failure(Exception("Acknowledge response body was null"))
+                Result.success(alert)
             } else {
                 Result.failure(Exception("Failed to acknowledge alert: ${response.code()}"))
             }

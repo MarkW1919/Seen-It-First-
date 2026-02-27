@@ -215,9 +215,14 @@ async def delete_route(
 
 
 async def _get_route_or_404(route_id: str, agent_id: uuid.UUID, db: AsyncSession) -> Route:
+    try:
+        parsed_id = uuid.UUID(route_id)
+    except ValueError:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid route ID format")
+
     stmt = (
         select(Route)
-        .where(Route.id == uuid.UUID(route_id), Route.agent_id == agent_id)
+        .where(Route.id == parsed_id, Route.agent_id == agent_id)
         .options(selectinload(Route.stops))
     )
     result = await db.execute(stmt)

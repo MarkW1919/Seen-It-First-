@@ -33,7 +33,7 @@ object AppModule {
             context,
             AppDatabase::class.java,
             "reposcan_db"
-        ).fallbackToDestructiveMigration().build()
+        ).build()
     }
 
     @Provides

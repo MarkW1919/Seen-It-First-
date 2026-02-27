@@ -23,4 +23,10 @@ RUN mkdir -p /app/models /data/captures
 # Verify CUDA/TensorRT alignment at build time
 RUN python3 -c "import torch; assert torch.cuda.is_available(), 'CUDA not available'; print(f'CUDA {torch.version.cuda}, cuDNN {torch.backends.cudnn.version()}')"
 
+# Non-root user (needs access to /app/models and /data/captures)
+RUN useradd -r -s /usr/sbin/nologin appuser \
+    && chown -R appuser:appuser /app /data/captures
+
+USER appuser
+
 CMD ["python3", "-m", "ai.pipeline"]
