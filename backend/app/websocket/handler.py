@@ -61,7 +61,8 @@ class ConnectionManager:
         if ws:
             try:
                 await asyncio.wait_for(ws.send_json(message), timeout=SEND_TIMEOUT_SECONDS)
-            except (TimeoutError, Exception):
+            except (TimeoutError, Exception) as e:
+                logger.warning("Send to %s failed: %s", conn_id, e)
                 await self.disconnect(conn_id)
 
     async def broadcast(self, message: dict) -> None:
@@ -85,7 +86,8 @@ class ConnectionManager:
             try:
                 await asyncio.wait_for(ws.send_text(text), timeout=SEND_TIMEOUT_SECONDS)
                 return None
-            except (TimeoutError, Exception):
+            except (TimeoutError, Exception) as e:
+                logger.warning("Broadcast to %s failed: %s", conn_id, e)
                 return conn_id
 
         results = await asyncio.gather(
@@ -163,6 +165,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str | None = None) -> 
                     # Client can subscribe to specific event types
                     await websocket.send_json({"type": "subscribed", "channel": msg.get("channel")})
             except json.JSONDecodeError:
-                pass
+                logger.debug("Invalid JSON from client %s", conn_id)
     except WebSocketDisconnect:
         await manager.disconnect(conn_id)
