@@ -26,4 +26,10 @@ COPY . .
 
 RUN mkdir -p /data/captures
 
+# Non-root user with video group for /dev/video0 access
+RUN useradd -r -s /usr/sbin/nologin -G video appuser \
+    && chown -R appuser:appuser /app /data/captures
+
+USER appuser
+
 CMD ["python3", "-m", "camera.controller"]

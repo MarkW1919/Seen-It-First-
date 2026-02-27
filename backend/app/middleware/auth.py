@@ -22,7 +22,20 @@ async def get_current_user(
             detail="Invalid or expired token",
         )
 
-    user_id = uuid.UUID(payload["sub"])
+    sub = payload.get("sub")
+    if not sub:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token payload",
+        )
+
+    try:
+        user_id = uuid.UUID(sub)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token subject",
+        )
     user = await get_user_by_id(db, user_id)
 
     if not user or not user.is_active:

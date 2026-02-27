@@ -19,7 +19,8 @@ class AuthRepository @Inject constructor(
         return try {
             val response = apiService.login(LoginRequest(email, password))
             if (response.isSuccessful) {
-                val token = response.body()!!
+                val token = response.body()
+                    ?: return Result.failure(Exception("Login succeeded but response body was null"))
                 preferencesManager.saveTokens(token.accessToken, token.refreshToken)
                 Result.success(token)
             } else {
@@ -34,7 +35,9 @@ class AuthRepository @Inject constructor(
         return try {
             val response = apiService.getMe()
             if (response.isSuccessful) {
-                Result.success(response.body()!!)
+                val user = response.body()
+                    ?: return Result.failure(Exception("User response body was null"))
+                Result.success(user)
             } else {
                 Result.failure(Exception("Failed to get user: ${response.code()}"))
             }

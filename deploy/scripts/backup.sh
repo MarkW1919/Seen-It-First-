@@ -20,9 +20,14 @@ backup() {
 
     BACKUP_FILE="$BACKUP_DIR/reposcan_$TIMESTAMP.tar.gz"
 
-    # Dump database
+    # Dump database (pipefail ensures pg_dump errors are caught, not masked by gzip)
     echo "  Dumping database..."
     docker exec "$DB_CONTAINER" pg_dump -U reposcan reposcan | gzip > "$BACKUP_DIR/db_$TIMESTAMP.sql.gz"
+    if [ "${PIPESTATUS[0]}" -ne 0 ]; then
+        echo "ERROR: pg_dump failed"
+        rm -f "$BACKUP_DIR/db_$TIMESTAMP.sql.gz"
+        exit 1
+    fi
 
     # Package everything
     echo "  Packaging backup..."

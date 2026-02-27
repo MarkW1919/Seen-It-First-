@@ -29,7 +29,8 @@ class DetectionRepository @Inject constructor(
         return try {
             val response = apiService.getDetections(page, pageSize)
             if (response.isSuccessful) {
-                val detectionList = response.body()!!
+                val detectionList = response.body()
+                    ?: return Result.failure(Exception("Detections response body was null"))
                 cacheDetections(detectionList.items)
                 Result.success(detectionList)
             } else {
@@ -44,7 +45,9 @@ class DetectionRepository @Inject constructor(
         return try {
             val response = apiService.searchPlate(query, exact)
             if (response.isSuccessful) {
-                Result.success(response.body()!!)
+                val result = response.body()
+                    ?: return Result.failure(Exception("Search response body was null"))
+                Result.success(result)
             } else {
                 Result.failure(Exception("Search failed: ${response.code()}"))
             }

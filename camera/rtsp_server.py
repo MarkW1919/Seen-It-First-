@@ -64,8 +64,8 @@ class RTSPServer:
         try:
             self._process = subprocess.Popen(
                 cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
             )
             self._running = True
             logger.info(f"RTSP server started at rtsp://0.0.0.0:{self.port}{self.path}")
@@ -88,7 +88,12 @@ class RTSPServer:
         """Stop RTSP server."""
         if self._process:
             self._process.terminate()
-            self._process.wait(timeout=5)
+            try:
+                self._process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                logger.warning("RTSP server did not terminate, killing")
+                self._process.kill()
+                self._process.wait(timeout=2)
             self._process = None
         self._running = False
         logger.info("RTSP server stopped")

@@ -22,14 +22,14 @@ services:
     restart: unless-stopped
     command: >
       redis-server
-      --requirepass ${REDIS_PASSWORD:-}
+      --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
       --maxmemory 256mb
       --maxmemory-policy allkeys-lru
     # Redis port NOT exposed to host — only accessible within Docker network
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-}", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -78,6 +78,12 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import torch; assert torch.cuda.is_available()"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   # ─── Camera Service ───
   camera:
@@ -96,6 +102,12 @@ services:
     # RTSP port NOT exposed to host — only accessible within Docker network
     depends_on:
       - ai
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import cv2; print('ok')"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
 
   # ─── Frontend ───
   frontend:
@@ -106,6 +118,11 @@ services:
     # Frontend port NOT exposed to host — Nginx reverse proxy handles external access
     depends_on:
       - backend
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:5173/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
   # ─── Nginx Reverse Proxy ───
   nginx:

@@ -16,8 +16,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 # App code
 COPY . .
 
-# Create data directory
-RUN mkdir -p /data/captures
+# Create data directory and non-root user
+RUN mkdir -p /data/captures \
+    && useradd -r -s /usr/sbin/nologin appuser \
+    && chown -R appuser:appuser /app /data/captures
+
+USER appuser
 
 EXPOSE 8000
 

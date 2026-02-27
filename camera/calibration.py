@@ -105,13 +105,20 @@ class CameraCalibration:
             json.dump(data, f, indent=2)
         logger.info(f"Calibration saved to {filepath}")
 
-    def load(self, filepath: str):
-        """Load calibration data from file."""
+    def load(self, filepath: str, image_size: tuple[int, int] = (1920, 1080)):
+        """Load calibration data from file and compute undistortion maps.
+
+        Args:
+            filepath: Path to calibration JSON file
+            image_size: (width, height) for computing undistortion maps
+        """
         try:
             with open(filepath) as f:
                 data = json.load(f)
             self.camera_matrix = np.array(data["camera_matrix"])
             self.dist_coeffs = np.array(data["dist_coeffs"])
+            w, h = image_size
+            self._compute_maps(w, h)
             self._calibrated = True
             logger.info(f"Calibration loaded from {filepath}")
         except Exception as e:
