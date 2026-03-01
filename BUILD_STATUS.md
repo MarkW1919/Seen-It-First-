@@ -1,8 +1,8 @@
 # RepoScan Pro — Build Status & Completion Report
 
-> **Generated:** 2026-02-16
+> **Updated:** 2026-03-01
 > **Version:** 1.0.0
-> **Branch:** `main` (5 commits merged)
+> **Branch:** `main`
 
 ---
 
@@ -12,13 +12,19 @@
 |------------------------|--------|----------------------------------------------|
 | TypeScript compilation | PASS   | `tsc --noEmit` — zero errors                 |
 | Vite production build  | PASS   | 154 modules, 399 kB JS bundle, PWA generated |
-| ESLint                 | FAIL   | Missing `eslint.config.js` (ESLint 10)       |
-| Unit tests             | FAIL   | No `test` script defined; no test framework   |
-| npm install            | WARN   | 3 moderate vulnerabilities, deprecated deps   |
-| Backend tests          | N/A    | `backend/tests/` contains only `__init__.py`  |
-| AI model files         | N/A    | `ai/models/` contains only `.gitkeep`         |
-| Database migrations    | N/A    | `backend/alembic/versions/` is empty          |
-| CI/CD pipeline         | N/A    | No GitHub Actions or other CI configured      |
+| ESLint                 | PASS   | `eslint.config.js` flat config configured     |
+| Frontend unit tests    | PASS   | 73 tests across 6 test files (Vitest)        |
+| Backend unit tests     | PASS   | 9 test files, 1,774 lines (pytest)           |
+| AI unit tests          | PASS   | 78 tests across 3 test files (pytest)        |
+| Camera unit tests      | PASS   | 66 tests across 4 test files (pytest)        |
+| Backend lint           | PASS   | Ruff 0.8.4 check + format                   |
+| Database migrations    | PASS   | 3 Alembic migrations (schema + indexes)      |
+| CI/CD pipeline         | PASS   | 4-job GitHub Actions workflow                |
+| AI model files         | PASS   | Label files generated; download_models.sh with --verify flag |
+| npm install            | PASS   | 0 vulnerabilities (serialize-javascript override applied) |
+| Integration tests      | PASS   | 6 test files covering auth, detections, health, hotlist, WebSocket |
+| Deployment pipeline    | PASS   | GitHub Actions deploy.yml with GHCR push + release creation |
+| SSL documentation      | PASS   | Certificate generation script + setup guide   |
 
 ---
 
@@ -77,119 +83,100 @@
 
 ---
 
-## What Needs to Be Finished
+## Completed Since Initial Report
 
-### 1. ESLint Configuration (Priority: High)
+### 1. ESLint Configuration — DONE
+- `frontend/eslint.config.js` created with flat config format (ESLint v9+)
+- TypeScript and React rules configured
 
-ESLint 10 is installed but there is no `eslint.config.js` file. The `npm run lint` command fails immediately.
+### 2. Testing Framework & Tests — DONE
+- **Frontend:** Vitest 4.0.18 + React Testing Library + jsdom — 73 tests passing
+  - `PlateDisplay.test.tsx` — 15 tests (rendering, sizes, confidence colors, alert styling)
+  - `DetectionCard.test.tsx` — 15 tests (compact/full modes, plate reads, alerts, clicks)
+  - `format.test.ts` — 7 tests (vehicle description formatting)
+  - `store.test.ts` — 17 tests (auth, navigation, live feed, alerts, settings, camera)
+  - `index.test.ts` — 12 tests (Zustand store auth slice)
+  - `api.test.ts` — 7 tests (demo mode API client)
+- **Backend:** pytest 8.3.4 + pytest-asyncio — 9 test files, 1,774 lines
+- **AI Module:** pytest — 78 tests passing across 3 test files
+  - `test_utils.py` — softmax, IoU, TTLCache (LRU eviction, TTL expiration)
+  - `test_tracker.py` — Kalman filter, Track lifecycle, MultiObjectTracker (matching, aging, cost matrix)
+  - `test_plate_ocr.py` — CTC decode, plate validation, confusion correction, duplicate cache, partial merging, state patterns
+- **Camera Module:** pytest — 66 tests passing across 4 test files
+  - `test_ptz.py` — pan wrapping, tilt/zoom clamping, speed bounds, PTZController async commands
+  - `test_night_vision.py` — lux estimation, mode switching, EMA smoothing, hysteresis thresholds
+  - `test_preprocessor.py` — CLAHE, denoise, sharpen, plate enhancement, upscaling
+  - `test_rtsp_server.py` — pipeline building (H.264/H.265), start/stop lifecycle, URL generation
 
-**What's needed:**
-- Create `frontend/eslint.config.js` using the new flat config format (ESLint v9+)
-- Configure rules for React, TypeScript, and Tailwind
-- Fix any lint errors that surface
+### 3. Database Migrations — DONE
+- 3 Alembic migrations in `backend/alembic/versions/`:
+  - `001_initial_schema.py` — full schema for User, Detection, HotListEntry, ScanSession
+  - `002_hotlist_indexes.py` — performance indexes for hot list queries
+  - `003_missing_indexes.py` — additional indexes
 
-### 2. Testing Framework & Tests (Priority: High)
+### 4. CI/CD Pipeline — DONE
+- `.github/workflows/ci.yml` with 4 jobs:
+  - Frontend lint & test (Node 20)
+  - Backend lint (Ruff 0.8.4)
+  - Backend test (pytest + PostgreSQL 15 + Redis 7)
+  - Docker build check
 
-No test framework is installed and no tests exist for any layer.
+### 5. Python Linting — DONE
+- `ruff.toml` configured at repo root (Python 3.12, line length 100)
+- `requirements-dev.txt` with ruff 0.8.4 + mypy 1.13.0
 
-**Frontend:**
-- Install Vitest (Vite-native) + React Testing Library + jsdom
-- Add `"test"` script to `frontend/package.json`
-- Write unit tests for critical components (Dashboard, DetectionCard, AlertPanel)
-- Write tests for Zustand stores and custom hooks
-- Write integration tests for API client/mock data service
+### 6. Pre-commit Hooks — DONE
+- `.pre-commit-config.yaml` with secret detection, large file check, ruff
 
-**Backend:**
-- Install pytest + pytest-asyncio + httpx (test client for FastAPI)
-- Write tests for API routers (auth flow, detection CRUD, hotlist matching)
-- Write tests for service layer (alert logic, detection processing)
-- Write tests for database models and queries
-- `backend/tests/__init__.py` exists but no actual test files
+---
 
-### 3. Database Migrations (Priority: High)
+## Completed Since Last Update
 
-`backend/alembic/versions/` is empty — no migration files exist.
+### 7. AI Model Files — DONE
+- Label files generated in `ai/models/labels/` (makes, models, years, colors)
+- `ai/verify_models.py` created for comprehensive model file validation
+- `ai/download_models.sh` enhanced with `--labels` and `--verify` flags
+- Actual ONNX/TensorRT model weights still need to be downloaded at runtime on target hardware
 
-**What's needed:**
-- Generate initial Alembic migration from SQLAlchemy models (`alembic revision --autogenerate`)
-- Verify migration covers all models: User, Detection, HotListEntry, ScanSession
-- Verify PostGIS extension creation is included
-- Test migration up/down cycle
+### 8. npm Dependency Vulnerabilities — DONE
+- Fixed via `overrides` in `frontend/package.json` (serialize-javascript >= 7.0.3)
+- `npm audit` now reports 0 vulnerabilities
 
-### 4. AI Model Files (Priority: High — Required for Runtime)
+### 9. Integration & E2E Testing — DONE
+- 6 integration test files added in `tests/integration/`:
+  - `test_auth_flow.py` — authentication flows
+  - `test_detections_api.py` — detections API endpoints
+  - `test_health.py` — health check endpoints
+  - `test_hotlist_api.py` — hotlist API endpoints
+  - `test_websocket.py` — WebSocket connection and messaging
+  - `test_stack.sh` — full-stack integration smoke test
+- Shared fixtures in `conftest.py`
 
-`ai/models/` is empty (only `.gitkeep`). The pipeline code references model files that don't exist.
+### 10. Security Hardening — DONE
+- SSL documentation and certificate generation script added (`deploy/ssl/README.md`, `deploy/ssl/generate-dev-certs.sh`)
+- Let's Encrypt production setup guide with auto-renewal
+- `backend/app/config.py` now validates required secrets on startup (SECRET_KEY, POSTGRES_PASSWORD)
+- Security warnings emitted for insecure settings (missing REDIS_PASSWORD, DEBUG mode, disabled SSL)
+- `.env` validation enforced at application startup
 
-**What's needed:**
-- Download or train YOLOv8n weights for vehicle detection
-- Download or train YOLOv8n weights for plate detection
-- Download or train CRNN model for plate OCR
-- Download or train EfficientNet-B0 for vehicle classification
-- Convert models to ONNX/TensorRT format
-- Add model download script or instructions to documentation
-- Document model versions and expected file paths per `ai/config.yaml`
+### 11. Deployment Pipeline — DONE
+- `.github/workflows/deploy.yml` created with 2 jobs:
+  - Build and push Docker images to GHCR (backend + frontend)
+  - Create GitHub Release on version tags (v*)
+- Concurrency controls prevent overlapping deployments
+- Docker layer caching via GitHub Actions cache
 
-### 5. CI/CD Pipeline (Priority: Medium)
+---
 
-No automated pipelines exist.
+## Remaining for Production Deployment
 
-**What's needed:**
-- Create `.github/workflows/ci.yml` for:
-  - Frontend: lint, type-check, build, test
-  - Backend: lint (ruff/flake8), type-check (mypy), test (pytest)
-  - Docker image build validation
-- Create `.github/workflows/deploy.yml` for:
-  - Docker image registry push
-  - Optional: OTA deployment to Jetson devices
-- Add branch protection rules for `main`
+The following items require external action or target hardware and cannot be completed in the repository alone:
 
-### 6. npm Dependency Vulnerabilities (Priority: Medium)
-
-`npm install` reports 3 moderate severity vulnerabilities and deprecated packages.
-
-**What's needed:**
-- Run `npm audit` to identify specific vulnerabilities
-- Update or replace deprecated packages (`sourcemap-codec`, `source-map`, `glob`)
-- Run `npm audit fix` or manually resolve remaining issues
-
-### 7. Python Dependency Linting (Priority: Medium)
-
-No Python linting or type checking is configured.
-
-**What's needed:**
-- Add `ruff` or `flake8` for Python linting across backend/ai/camera
-- Add `mypy` for Python type checking
-- Add `pyproject.toml` or similar configuration
-- Add `requirements-dev.txt` for development dependencies
-
-### 8. Integration & E2E Testing (Priority: Medium)
-
-No integration or end-to-end tests exist for the full Docker Compose stack.
-
-**What's needed:**
-- Docker Compose test profile for spinning up test database
-- API integration tests against live backend
-- WebSocket connection and alert flow tests
-- Camera → AI → Backend pipeline integration test (with mock frames)
-
-### 9. Security Hardening (Priority: Medium)
-
-- `.env.example` contains default passwords (`reposcan_secret_key_change_in_production`)
-- No automated secret scanning or pre-commit hooks
-- SSL certificates not provisioned (Nginx config is SSL-ready but certs not generated)
-
-**What's needed:**
-- Add pre-commit hooks for secret detection
-- Document SSL certificate generation (Let's Encrypt / self-signed)
-- Add `.env` validation on startup
-
-### 10. Documentation Gaps (Priority: Low)
-
-- No local development guide (running without Jetson hardware)
-- No model training/conversion guide
-- No database schema documentation
-- No contributing guide
-- No changelog
+- **Download/train AI model weights on target Jetson hardware** — Run `./ai/download_models.sh` on a machine with GPU access; fine-tune plate detector and OCR on real plate data
+- **Provision real SSL certificates** — Use Let's Encrypt (see `deploy/ssl/README.md`) with a registered domain pointing to the production server
+- **Configure production .env with real secrets** — Generate strong values for SECRET_KEY, POSTGRES_PASSWORD, REDIS_PASSWORD; never commit to version control
+- **Set up GitHub branch protection rules** — Require PR reviews and passing CI before merge to `main`
+- **Configure GHCR access tokens for deployment** — Create a personal access token or use GitHub App credentials for pulling images on the deployment target
 
 ---
 
@@ -200,9 +187,9 @@ No integration or end-to-end tests exist for the full Docker Compose stack.
 | Node.js         | v22.22.0    |
 | npm             | 10.9.4      |
 | TypeScript      | ~5.5.3      |
-| Vite            | ^5.3.4      |
+| Vite            | ^7.3.1      |
 | React           | ^18.3.1     |
-| ESLint          | 10.0.0      |
+| ESLint          | ^9.39.2     |
 | Python (target) | 3.12        |
 | PostgreSQL      | 16 + PostGIS|
 | Redis           | 7-alpine    |

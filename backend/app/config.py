@@ -1,6 +1,9 @@
+import logging
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings
+
+logger = logging.getLogger(__name__)
 
 
 def _require_env(var: str) -> str:
@@ -98,6 +101,25 @@ def get_settings() -> Settings:
         raise RuntimeError(
             "POSTGRES_PASSWORD environment variable is required. "
             "Generate one with: openssl rand -base64 32"
+        )
+
+    # Non-fatal security warnings
+    if not settings.redis_password:
+        logger.warning(
+            "REDIS_PASSWORD is empty — Redis is accessible without authentication. "
+            "Set REDIS_PASSWORD for production deployments."
+        )
+
+    if settings.debug:
+        logger.warning(
+            "DEBUG mode is enabled — Swagger UI (/docs) and ReDoc (/redoc) are exposed. "
+            "Disable DEBUG in production environments."
+        )
+
+    if settings.postgres_sslmode == "disable" and not settings.debug:
+        logger.warning(
+            "POSTGRES_SSLMODE is set to 'disable' in non-debug mode. "
+            "Use 'require' or 'verify-full' for production database connections."
         )
 
     return settings
