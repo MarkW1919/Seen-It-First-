@@ -18,7 +18,7 @@ services:
 
   # ─── Redis ───
   redis:
-    image: redis:7-alpine
+    image: redis:7.4-alpine
     restart: unless-stopped
     command: >
       redis-server
@@ -126,7 +126,7 @@ services:
 
   # ─── Nginx Reverse Proxy ───
   nginx:
-    image: nginx:alpine
+    image: nginx:1.27-alpine
     restart: unless-stopped
     ports:
       - "80:80"
@@ -140,7 +140,7 @@ services:
 
   # ─── Prometheus Monitoring ───
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.2.1
     restart: unless-stopped
     volumes:
       - ./deploy/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
@@ -149,7 +149,7 @@ services:
 
   # ─── Grafana Dashboard ───
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:11.5.2
     restart: unless-stopped
     environment:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:?GRAFANA_PASSWORD is required}

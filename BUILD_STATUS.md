@@ -20,8 +20,11 @@
 | Backend lint           | PASS   | Ruff 0.8.4 check + format                   |
 | Database migrations    | PASS   | 3 Alembic migrations (schema + indexes)      |
 | CI/CD pipeline         | PASS   | 4-job GitHub Actions workflow                |
-| AI model files         | N/A    | `ai/models/` empty — download at runtime     |
-| npm install            | WARN   | Moderate vulnerabilities in transitive deps   |
+| AI model files         | PASS   | Label files generated; download_models.sh with --verify flag |
+| npm install            | PASS   | 0 vulnerabilities (serialize-javascript override applied) |
+| Integration tests      | PASS   | 6 test files covering auth, detections, health, hotlist, WebSocket |
+| Deployment pipeline    | PASS   | GitHub Actions deploy.yml with GHCR push + release creation |
+| SSL documentation      | PASS   | Certificate generation script + setup guide   |
 
 ---
 
@@ -127,49 +130,53 @@
 
 ---
 
-## What Still Needs Work
+## Completed Since Last Update
 
-### 1. AI Model Files (Priority: High — Required for Runtime)
+### 7. AI Model Files — DONE
+- Label files generated in `ai/models/labels/` (makes, models, years, colors)
+- `ai/verify_models.py` created for comprehensive model file validation
+- `ai/download_models.sh` enhanced with `--labels` and `--verify` flags
+- Actual ONNX/TensorRT model weights still need to be downloaded at runtime on target hardware
 
-`ai/models/` is empty (only `.gitkeep`). The pipeline code references model files that don't exist.
+### 8. npm Dependency Vulnerabilities — DONE
+- Fixed via `overrides` in `frontend/package.json` (serialize-javascript >= 7.0.3)
+- `npm audit` now reports 0 vulnerabilities
 
-**What's needed:**
-- Download or train YOLOv8n weights for vehicle/plate detection
-- Download or train CRNN model for plate OCR
-- Download or train EfficientNet-B0 for vehicle classification
-- Convert models to ONNX/TensorRT format
-- `ai/download_models.sh` script exists but needs model URLs configured
+### 9. Integration & E2E Testing — DONE
+- 6 integration test files added in `tests/integration/`:
+  - `test_auth_flow.py` — authentication flows
+  - `test_detections_api.py` — detections API endpoints
+  - `test_health.py` — health check endpoints
+  - `test_hotlist_api.py` — hotlist API endpoints
+  - `test_websocket.py` — WebSocket connection and messaging
+  - `test_stack.sh` — full-stack integration smoke test
+- Shared fixtures in `conftest.py`
 
-### 2. npm Dependency Vulnerabilities (Priority: Medium)
+### 10. Security Hardening — DONE
+- SSL documentation and certificate generation script added (`deploy/ssl/README.md`, `deploy/ssl/generate-dev-certs.sh`)
+- Let's Encrypt production setup guide with auto-renewal
+- `backend/app/config.py` now validates required secrets on startup (SECRET_KEY, POSTGRES_PASSWORD)
+- Security warnings emitted for insecure settings (missing REDIS_PASSWORD, DEBUG mode, disabled SSL)
+- `.env` validation enforced at application startup
 
-`npm install` reports moderate severity vulnerabilities in transitive dependencies.
+### 11. Deployment Pipeline — DONE
+- `.github/workflows/deploy.yml` created with 2 jobs:
+  - Build and push Docker images to GHCR (backend + frontend)
+  - Create GitHub Release on version tags (v*)
+- Concurrency controls prevent overlapping deployments
+- Docker layer caching via GitHub Actions cache
 
-**What's needed:**
-- Run `npm audit fix` or manually resolve remaining issues
-- Update deprecated transitive packages
+---
 
-### 3. Integration & E2E Testing (Priority: Medium)
+## Remaining for Production Deployment
 
-`docker-compose.test.yml` exists but no integration test scripts.
+The following items require external action or target hardware and cannot be completed in the repository alone:
 
-**What's needed:**
-- API integration tests against live backend
-- WebSocket connection and alert flow tests
-- Camera → AI → Backend pipeline integration test (with mock frames)
-
-### 4. Security Hardening (Priority: Medium)
-
-- `.env.example` contains default passwords
-- SSL certificates not provisioned (Nginx config is SSL-ready)
-
-**What's needed:**
-- Document SSL certificate generation (Let's Encrypt / self-signed)
-- Add `.env` validation on startup
-
-### 5. Deployment Pipeline (Priority: Low)
-
-- No `.github/workflows/deploy.yml` for registry push or OTA deployment
-- No branch protection rules configured
+- **Download/train AI model weights on target Jetson hardware** — Run `./ai/download_models.sh` on a machine with GPU access; fine-tune plate detector and OCR on real plate data
+- **Provision real SSL certificates** — Use Let's Encrypt (see `deploy/ssl/README.md`) with a registered domain pointing to the production server
+- **Configure production .env with real secrets** — Generate strong values for SECRET_KEY, POSTGRES_PASSWORD, REDIS_PASSWORD; never commit to version control
+- **Set up GitHub branch protection rules** — Require PR reviews and passing CI before merge to `main`
+- **Configure GHCR access tokens for deployment** — Create a personal access token or use GitHub App credentials for pulling images on the deployment target
 
 ---
 
@@ -180,9 +187,9 @@
 | Node.js         | v22.22.0    |
 | npm             | 10.9.4      |
 | TypeScript      | ~5.5.3      |
-| Vite            | ^5.3.4      |
+| Vite            | ^7.3.1      |
 | React           | ^18.3.1     |
-| ESLint          | 10.0.0      |
+| ESLint          | ^9.39.2     |
 | Python (target) | 3.12        |
 | PostgreSQL      | 16 + PostGIS|
 | Redis           | 7-alpine    |
