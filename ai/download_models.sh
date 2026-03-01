@@ -5,9 +5,12 @@
 # TensorRT .engine files are built at runtime on the target device.
 #
 # Usage:
-#   ./download_models.sh          # Download all models
-#   ./download_models.sh --yolo   # Download only YOLO vehicle/plate models
-#   ./download_models.sh --ocr    # Download only OCR model
+#   ./download_models.sh              # Download all models + generate labels
+#   ./download_models.sh --yolo       # Download only YOLO vehicle/plate models
+#   ./download_models.sh --ocr        # Download only OCR model
+#   ./download_models.sh --classifier # Download only classifier model
+#   ./download_models.sh --labels     # Generate label files only
+#   ./download_models.sh --verify     # Verify all model files are present
 set -euo pipefail
 
 MODELS_DIR="$(cd "$(dirname "$0")/models" && pwd)"
@@ -129,12 +132,97 @@ print('  NOTE: Retrain on Year/Make/Model dataset before production use.')
     echo "  Done."
 }
 
+# ─── 5. Label Files for Vehicle Classifier ───
+generate_labels() {
+    echo "[labels] Generating vehicle classifier label files ..."
+    LABELS_DIR="$MODELS_DIR/labels"
+    mkdir -p "$LABELS_DIR"
+
+    if [ -f "$LABELS_DIR/makes.json" ] && [ -f "$LABELS_DIR/models.json" ] \
+       && [ -f "$LABELS_DIR/years.json" ] && [ -f "$LABELS_DIR/colors.json" ]; then
+        echo "  All label files already exist, skipping."
+        return
+    fi
+
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+    python3 -c "
+import json, os
+
+labels_dir = '$LABELS_DIR'
+
+makes = [
+    'Acura', 'Alfa Romeo', 'Aston Martin', 'Audi', 'Bentley',
+    'BMW', 'Buick', 'Cadillac', 'Chevrolet', 'Chrysler',
+    'Dodge', 'Ferrari', 'Fiat', 'Ford', 'Genesis',
+    'GMC', 'Honda', 'Hyundai', 'Infiniti', 'Jaguar',
+    'Jeep', 'Kia', 'Lamborghini', 'Land Rover', 'Lexus',
+    'Lincoln', 'Lotus', 'Lucid', 'Maserati', 'Mazda',
+    'McLaren', 'Mercedes-Benz', 'Mini', 'Mitsubishi', 'Nissan',
+    'Polestar', 'Pontiac', 'Porsche', 'Ram', 'Rivian',
+    'Rolls-Royce', 'Saturn', 'Scion', 'Smart', 'Subaru',
+    'Suzuki', 'Tesla', 'Toyota', 'Volkswagen', 'Volvo',
+]
+
+models = [
+    'Accord', 'Altima', 'Avalon', 'Blazer', 'Bronco',
+    'C-Class', 'Camaro', 'Camry', 'Canyon', 'Challenger',
+    'Charger', 'Cherokee', 'Civic', 'Colorado', 'Compass',
+    'Corolla', 'Corvette', 'CR-V', 'CT4', 'CT5',
+    'Durango', 'E-Class', 'Elantra', 'Enclave', 'Encore',
+    'Envision', 'Equinox', 'Escalade', 'Escape', 'Explorer',
+    'Expedition', 'F-150', 'Forester', 'Forte', 'Frontier',
+    'GLC', 'GLE', 'Golf', 'Grand Cherokee', 'Highlander',
+    'HR-V', 'Impreza', 'IS', 'Jetta', 'K5',
+    'Kicks', 'Kona', 'Mach-E', 'Malibu', 'Maverick',
+    'Maxima', 'Model 3', 'Model S', 'Model X', 'Model Y',
+    'Murano', 'Mustang', 'NX', 'Odyssey', 'Optima',
+    'Outback', 'Outlander', 'Pacifica', 'Passport', 'Pathfinder',
+    'Pilot', 'Prius', 'Q5', 'Q7', 'RAV4',
+    'Ranger', 'Ridgeline', 'Rogue', 'RX', 'Santa Fe',
+    'Seltos', 'Sentra', 'Sierra', 'Silverado', 'Sorento',
+    'Soul', 'Sportage', 'Stinger', 'Suburban', 'Tacoma',
+    'Tahoe', 'Telluride', 'Tiguan', 'Titan', 'Traverse',
+    'Trax', 'Tucson', 'Tundra', 'Venue', 'Wrangler',
+    'X3', 'X5', 'XT4', 'XT5', 'Yukon',
+]
+
+years = [str(y) for y in range(1990, 2027)]
+
+colors = [
+    'black', 'white', 'silver', 'gray', 'red',
+    'blue', 'brown', 'green', 'beige', 'gold',
+    'orange', 'yellow', 'purple', 'maroon', 'teal',
+]
+
+for name, data in [('makes', makes), ('models', models), ('years', years), ('colors', colors)]:
+    path = os.path.join(labels_dir, f'{name}.json')
+    if not os.path.exists(path):
+        with open(path, 'w') as f:
+            json.dump(data, f, indent=2)
+            f.write('\n')
+        print(f'  Generated {name}.json ({len(data)} labels)')
+    else:
+        print(f'  {name}.json already exists, skipping.')
+"
+    echo "  Done."
+}
+
+# ─── 6. Verify Models ───
+run_verify() {
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+    echo "[verify] Running model verification ..."
+    python3 "$SCRIPT_DIR/verify_models.py"
+    exit $?
+}
+
 # ─── Parse args ───
 if [ $# -eq 0 ]; then
     download_vehicle_model
     download_plate_model
     download_ocr_model
     download_classifier_model
+    generate_labels
 else
     case "$1" in
         --yolo)
@@ -147,8 +235,14 @@ else
         --classifier)
             download_classifier_model
             ;;
+        --labels)
+            generate_labels
+            ;;
+        --verify)
+            run_verify
+            ;;
         *)
-            echo "Usage: $0 [--yolo|--ocr|--classifier]"
+            echo "Usage: $0 [--yolo|--ocr|--classifier|--labels|--verify]"
             exit 1
             ;;
     esac
