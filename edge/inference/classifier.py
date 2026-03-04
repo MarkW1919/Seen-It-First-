@@ -61,6 +61,10 @@ class VehicleClassifier:
     def load(self) -> bool:
         return self.engine.load()
 
+    @property
+    def is_loaded(self) -> bool:
+        return self.engine.is_loaded
+
     def classify(self, vehicle_crop: np.ndarray) -> VehicleClassification | None:
         """
         Classify a vehicle crop.

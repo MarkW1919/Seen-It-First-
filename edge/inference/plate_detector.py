@@ -54,6 +54,10 @@ class PlateDetector:
     def load(self) -> bool:
         return self.engine.load()
 
+    @property
+    def is_loaded(self) -> bool:
+        return self.engine.is_loaded
+
     def detect(
         self, frame: np.ndarray, vehicles: list[VehicleDetection]
     ) -> list[PlateDetection]:
