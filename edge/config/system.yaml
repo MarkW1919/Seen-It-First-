@@ -1,41 +1,92 @@
-# SEEN IT FIRST - System Configuration
-# Target platform: NVIDIA Jetson Orin Nano Super
+# Seen-It-First-Edge System Configuration
+# NVIDIA Jetson Orin Nano Super - Phase 1
 
-database:
-  path: data/seen_it_first.db
-  wal_mode: true
-  busy_timeout_ms: 5000
+system:
+  device: "jetson-orin-nano-super"
+  log_level: "INFO"
+  log_dir: "logs"
+  database_path: "data/seen_it_first.db"
 
-logging:
-  level: INFO
-  format: json
-  file: logs/seen_it_first.log
-  max_bytes: 10485760  # 10 MB
-  backup_count: 5
+cameras:
+  max_cameras: 4
+  ingest_fps: 30
+  frame_width: 1920
+  frame_height: 1080
+  queue_size: 8  # bounded frame queue per camera
+  protocol: "rtsp"  # rtsp or csi
+
+inference:
+  vehicle_detection:
+    model_path: "models/vehicle/yolov8n.engine"
+    input_size: 640
+    confidence_threshold: 0.45
+    nms_threshold: 0.5
+    max_fps: 15
+    precision: "fp16"
+    # Budget: ~45 MB VRAM
+
+  plate_detection:
+    model_path: "models/plate/yolov8s_plate.engine"
+    input_size: 640
+    confidence_threshold: 0.50
+    nms_threshold: 0.4
+    precision: "fp16"
+    # Budget: ~90 MB VRAM
+
+  ocr:
+    model_path: "models/ocr/crnn_plate.engine"
+    input_width: 200
+    input_height: 64
+    confidence_threshold: 0.60
+    min_plate_chars: 5
+    max_plate_chars: 8
+    precision: "fp16"
+    # Budget: ~30 MB VRAM
+
+  classifier:
+    model_path: "models/classifier/efficientnet_lite0.engine"
+    input_size: 224
+    precision: "int8"
+    # Budget: ~15 MB VRAM
+
+  tracker:
+    max_age: 30          # frames before track deletion
+    min_hits: 3          # detections before track confirmed
+    iou_threshold: 0.3
+    max_cosine_distance: 0.4
+    embedding_dim: 128
+
+  # Total GPU memory budget: ~200 MB models + ~300 MB runtime = ~500 MB
+  # Jetson Orin Nano Super shared memory: 8 GB
+  # Target: < 75% GPU utilization
+
+scheduling:
+  vehicle_detection_fps: 15
+  tracking_fps: 15
+  frame_skip_strategy: "drop_oldest"
 
 thermal:
-  check_interval_sec: 5
-  thresholds:
-    warning: 75
-    high: 85
-    critical: 90
-    emergency: 95
-  recovery_hysteresis: 5
+  poll_interval_sec: 5
+  threshold_1: 80  # °C - reduce to 10 FPS
+  threshold_2: 90  # °C - reduce to 8 FPS, suspend classifier
+  cooldown_fps_1: 10
+  cooldown_fps_2: 8
+  zone_path: "/sys/devices/virtual/thermal/thermal_zone0/temp"
+
+night_vision:
+  brightness_threshold: 60  # histogram mean below this = night mode
+  clahe_clip_limit: 3.0
+  clahe_grid_size: 8
+  gamma: 0.7
 
 hotlist:
-  cooldown_seconds: 60
-  alert_confidence_threshold: 0.70
+  file_path: "data/hotlist.csv"
+  cooldown_sec: 60
+  audio_alert: true
+  beep_frequency: 1000
+  beep_duration_ms: 500
 
-night_mode:
-  brightness_activate: 60
-  brightness_deactivate: 80
-
-api:
-  host: 0.0.0.0
-  port: 8000
-  cors_origins:
-    - "http://localhost:3000"
-
-data_dir: data/
-capture_dir: data/captures/
-clip_dir: data/clips/
+storage:
+  max_detections: 1000000
+  vacuum_interval_hours: 24
+  snapshot_dir: "data/snapshots"

@@ -1,128 +1,141 @@
-# SEEN IT FIRST
+# Seen-It-First-Edge
 
-Edge AI vehicle identification and license plate recognition system built for NVIDIA Jetson Orin Nano Super.
+Edge-only AI license plate recognition system for NVIDIA Jetson Orin Nano Super.
 
-## System Overview
+## Phase 1 Scope
 
-SEEN IT FIRST is a real-time, vehicle-mounted LPR system that captures, identifies, and alerts on vehicles of interest using 4 simultaneous camera streams processed by a cascaded AI inference pipeline. The system runs entirely on-device with no cloud dependency.
+Detect and read US license plates at night (80–100 ft range) using 2–4 cameras.
+No cloud. No Docker in production. Single-process edge service.
 
-**US license plates only.** All OCR, validation, and formatting rules target US plate standards.
+### Capabilities
 
-## Hardware Architecture
+- **Camera ingestion**: 4x RTSP/CSI cameras at 30 FPS via GStreamer + NVDEC
+- **Vehicle detection**: YOLOv8n at 12–15 FPS (TensorRT FP16)
+- **Plate detection**: YOLOv8s on vehicle crops only (TensorRT FP16)
+- **OCR**: Lightweight CRNN with US plate post-processing (TensorRT FP16)
+- **Classification**: EfficientNet-Lite0 for color/year bucket (TensorRT INT8)
+- **Tracking**: Lightweight DeepSORT (IoU + appearance embedding)
+- **Hotlist matching**: In-memory set with 60s cooldown, console + audio alerts
+- **Storage**: SQLite with WAL mode
+- **Thermal protection**: Two-level adaptive throttling
 
-```
-┌─────────────────────────────────────────────────┐
-│              Jetson Orin Nano Super              │
-│  8GB VRAM · 1024 CUDA cores · JetPack 6.x       │
-│                                                   │
-│  ┌─────────────┐   ┌─────────────┐               │
-│  │  Housing A   │   │  Housing B   │              │
-│  │ IMX462 (LPR) │   │ IMX462 (LPR) │             │
-│  │ IMX327 (Wide)│   │ IMX327 (Wide)│             │
-│  │ 850nm IR     │   │ 850nm IR     │             │
-│  └─────────────┘   └─────────────┘               │
-│                                                   │
-│  Target: 80–100 ft plate read range              │
-│  4 cameras · 30 FPS capture · 15 FPS inference   │
-└─────────────────────────────────────────────────┘
-```
+## Hardware Requirements
 
-## Inference Pipeline
-
-Cascaded inference — each stage fires only when the prior stage qualifies:
-
-| Stage              | Frequency   | Scope              | Trigger                          |
-|--------------------|-------------|---------------------|----------------------------------|
-| Frame Capture      | 30 FPS      | Full frame          | Always (NVDEC hardware decode)   |
-| Vehicle Detection  | 15 FPS      | Full frame 640x640  | Every 2nd captured frame         |
-| Plate Detection    | On demand   | Vehicle ROI only    | Vehicle confidence >= 0.45       |
-| OCR                | On demand   | Plate ROI only      | Plate confidence >= 0.55         |
-| Vehicle Classifier | Once/track  | Best vehicle crop   | New confirmed DeepSORT track     |
-| DeepSORT Tracker   | 15 FPS      | Detection boxes     | Vehicle detection output         |
+| Component | Specification |
+|-----------|--------------|
+| Compute | NVIDIA Jetson Orin Nano Super (8 GB) |
+| Cameras | 2–4x Starvis 2 sensor cameras |
+| IR | External 850nm IR illumination |
+| Storage | 64 GB+ NVMe SSD |
 
 ## GPU Memory Budget
 
-| Component             | VRAM (MB) |
-|-----------------------|-----------|
-| YOLOv8n vehicle det   | 180       |
-| YOLOv8s plate det     | 280       |
-| CRNN OCR              | 50        |
-| EfficientNet-Lite0    | 60        |
-| DeepSORT ReID         | 40        |
-| CUDA context + buffers| 550       |
-| **Total**             | **1,160** |
+| Model | Engine Size | VRAM |
+|-------|-----------|------|
+| YOLOv8n (vehicle) | ~12 MB | ~45 MB |
+| YOLOv8s (plate) | ~45 MB | ~90 MB |
+| CRNN (OCR) | ~8 MB | ~30 MB |
+| EfficientNet-Lite0 (classifier) | ~5 MB | ~15 MB |
+| **Total models** | **~70 MB** | **~180 MB** |
+| Runtime overhead | — | ~300 MB |
+| **Total GPU** | — | **~480 MB** |
 
-Budget cap: 75% of 8 GB VRAM (6,144 MB). Headroom: ~5 GB.
+Target: < 75% GPU utilization on 8 GB shared memory.
 
-## Thermal Protection
-
-| GPU Temp | Action                                      |
-|----------|---------------------------------------------|
-| < 75C    | Full operation: 15 FPS detection            |
-| 75-84C   | Reduce to 10 FPS detection                  |
-| 85-89C   | Reduce to 8 FPS detection                   |
-| >= 90C   | Suspend classifier, detection at 5 FPS      |
-| >= 95C   | Suspend all inference, critical alert        |
-
-## Folder Structure
+## Inference Pipeline
 
 ```
-edge/              Jetson-side AI system
-  camera/          GStreamer capture, multi-stream manager, health monitoring
-  inference/       YOLOv8 detection, CRNN OCR, EfficientNet classifier, DeepSORT
-  models/          TensorRT engine files (gitignored)
-  fusion/          Plate + vehicle fusion, confidence scoring, hotlist matching
-  night/           ROI-only CLAHE enhancement, exposure hooks
-  ptz/             Pelco-D / ONVIF PTZ control, auto-tracking
-  database/        SQLite connection, schema, repository
-  api/             FastAPI REST + WebSocket endpoints
-  utils/           Logging, image helpers, thermal monitoring
-  config/          YAML configuration files
-  main.py          System entry point
-
-dashboard/         Windows tactical UI (React + Vite + TypeScript + Tailwind)
-deployment/        Dockerfiles (dev), systemd (prod), nginx, Jetson setup guide
-docs/              Architecture and performance tuning documentation
-scripts/           Model download and TensorRT conversion utilities
-tests/             Integration and system tests
+Camera (30 FPS) → Vehicle Detection (15 FPS) → Plate Detection (on crops)
+                                                      ↓
+                                              OCR (conf > threshold)
+                                                      ↓
+                                              Hotlist Check → Alert
+                                                      ↓
+                                              Classifier (once/track)
+                                                      ↓
+                                              SQLite Storage
 ```
 
-## Development Workflow
+## Directory Structure
 
-Docker Compose is provided for development only:
+```
+edge/
+├── camera/          # GStreamer capture + camera management
+├── inference/       # All ML models + scheduling
+├── hotlist/         # Plate matching + CSV loader
+├── storage/         # SQLite database + repository
+├── system/          # Thermal monitoring, alerts
+├── config/          # system.yaml
+└── main.py          # Service entry point
+
+models/              # TensorRT engine files (not in git)
+systemd/             # systemd service file
+```
+
+## Setup
 
 ```bash
-# Start development environment
-docker compose up --build
+# On Jetson Orin Nano Super with JetPack 6.x installed
 
-# Run edge system locally (requires Jetson or CUDA GPU)
-cd edge && python main.py
+# Create virtual env (inherits system TensorRT/PyCUDA)
+python3 -m venv --system-site-packages venv
+source venv/bin/activate
 
-# Run dashboard dev server
-cd dashboard && npm install && npm run dev
+# Install dependencies
+pip install -r requirements.txt
+
+# Create data directory
+mkdir -p data logs
+
+# (Optional) Create hotlist
+echo "ABC1234,stolen,high" > data/hotlist.csv
+
+# Edit camera config
+nano edge/camera/config.yaml
+
+# Run
+python -m edge.main
 ```
 
 ## Production Deployment
 
-Production runs via **systemd** (not Docker). The dashboard is pre-built as a static SPA and served by nginx.
-
 ```bash
-# On Jetson: install and start
-sudo cp deployment/systemd/*.service /etc/systemd/system/
-sudo systemctl enable --now seen-it-first-edge
+# Copy to /opt
+sudo cp -r . /opt/seen-it-first
+sudo useradd -r -s /bin/false sif
+sudo chown -R sif:sif /opt/seen-it-first
 
-# Build dashboard static files (one-time, or on update)
-cd dashboard && npm run build
-# nginx serves dashboard/dist/ and proxies /api/ to uvicorn
+# Install systemd service
+sudo cp systemd/seen-it-first-edge.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable seen-it-first-edge
+sudo systemctl start seen-it-first-edge
+
+# Check status
+sudo systemctl status seen-it-first-edge
+journalctl -u seen-it-first-edge -f
 ```
 
-See `deployment/jetson-setup.md` for full installation guide.
+## Night Vision
+
+Night mode is auto-detected via histogram brightness.
+Only plate ROI gets enhancement (CLAHE) — no full-frame processing.
+
+## Thermal Protection
+
+| Level | Trigger | Action |
+|-------|---------|--------|
+| 0 | < 80°C | Normal (15 FPS detection) |
+| 1 | ≥ 80°C | Reduce to 10 FPS |
+| 2 | ≥ 90°C | Reduce to 8 FPS + suspend classifier |
+
+All thermal events logged to SQLite.
 
 ## Performance Targets
 
-- 30 FPS ingest per camera (NVDEC hardware decode)
-- 12-15 FPS vehicle detection per camera
-- < 2 second hotlist alert latency
-- <= 3 GB total GPU memory usage
-- Stable operation in 90F+ ambient temperature
-- < 5% dropped frames under full load
+| Metric | Target |
+|--------|--------|
+| Ingest | 30 FPS per camera |
+| Vehicle detection | 12–15 FPS |
+| Hotlist alert latency | < 2 seconds |
+| Operating temp | Stable at 90°F+ ambient |

@@ -1,0 +1,17 @@
+# Seen-It-First-Edge Dependencies
+# Target: NVIDIA Jetson Orin Nano Super, Python 3.10+
+
+# Core
+numpy>=1.24,<2.0
+opencv-python-headless>=4.8
+PyYAML>=6.0
+
+# Inference (Jetson JetPack provides TensorRT + PyCUDA system-wide)
+# tensorrt          # provided by JetPack
+# pycuda            # provided by JetPack
+
+# Tracking
+scipy>=1.10
+
+# Audio alerts (optional, system packages preferred)
+# sox / beep available via apt

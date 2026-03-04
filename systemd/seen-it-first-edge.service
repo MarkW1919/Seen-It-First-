@@ -1,0 +1,36 @@
+[Unit]
+Description=Seen-It-First Edge AI License Plate Recognition
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sif
+Group=sif
+WorkingDirectory=/opt/seen-it-first
+ExecStart=/opt/seen-it-first/venv/bin/python -m edge.main /opt/seen-it-first/edge/config/system.yaml
+Restart=on-failure
+RestartSec=10
+WatchdogSec=60
+
+# Resource limits
+LimitNOFILE=65536
+MemoryMax=6G
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=seen-it-first
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/seen-it-first/data /opt/seen-it-first/logs
+PrivateTmp=true
+
+# GPU access
+SupplementaryGroups=video
+
+[Install]
+WantedBy=multi-user.target

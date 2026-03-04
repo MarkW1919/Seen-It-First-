@@ -1,0 +1,39 @@
+# Camera Configuration
+# Define each camera's connection and processing settings
+
+cameras:
+  - id: "cam_0"
+    name: "Front Left"
+    uri: "rtsp://192.168.1.100:554/stream1"
+    type: "rtsp"  # rtsp | csi
+    enabled: true
+    width: 1920
+    height: 1080
+    fps: 30
+
+  - id: "cam_1"
+    name: "Front Right"
+    uri: "rtsp://192.168.1.101:554/stream1"
+    type: "rtsp"
+    enabled: true
+    width: 1920
+    height: 1080
+    fps: 30
+
+  - id: "cam_2"
+    name: "Rear Left"
+    uri: "rtsp://192.168.1.102:554/stream1"
+    type: "rtsp"
+    enabled: false
+    width: 1920
+    height: 1080
+    fps: 30
+
+  - id: "cam_3"
+    name: "Rear Right"
+    uri: "rtsp://192.168.1.103:554/stream1"
+    type: "rtsp"
+    enabled: false
+    width: 1920
+    height: 1080
+    fps: 30

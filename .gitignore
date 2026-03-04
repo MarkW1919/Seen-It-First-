@@ -11,16 +11,8 @@ build/
 .venv/
 venv/
 env/
-*.whl
 
-# Node
-node_modules/
-dashboard/dist/
-dashboard/.vite/
-.npm
-*.tsbuildinfo
-
-# Jetson / AI Model Weights
+# AI Model Weights & Engines
 *.engine
 *.onnx
 *.pt
@@ -28,17 +20,13 @@ dashboard/.vite/
 *.weights
 *.trt
 *.plan
-edge/models/*.engine
-edge/models/*.onnx
-edge/models/*.pt
-edge/models/*.pth
-edge/models/*.trt
+models/**/*.engine
+models/**/*.onnx
+models/**/*.pt
 
 # Environment
 .env
-.env.local
-.env.production
-.env.*.local
+.env.*
 
 # Logs
 *.log
@@ -48,7 +36,11 @@ logs/
 *.db
 *.sqlite
 *.sqlite3
-data/seen_it_first.db
+data/
+
+# Snapshots / captures
+snapshots/
+captures/
 
 # IDE
 .vscode/
@@ -60,24 +52,13 @@ data/seen_it_first.db
 # OS
 .DS_Store
 Thumbs.db
-desktop.ini
 
-# Docker
-docker-compose.override.yml
-
-# Data / Captures
-data/
-captures/
-snapshots/
-clips/
+# Calibration data
+calibration/*.npz
+calibration/*.yaml
 
 # Testing
 .pytest_cache/
 .coverage
 htmlcov/
 .mypy_cache/
-
-# Build artifacts
-*.o
-*.a
-*.dylib
