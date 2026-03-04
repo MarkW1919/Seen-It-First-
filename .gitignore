@@ -4,24 +4,51 @@ __pycache__/
 *$py.class
 *.so
 *.egg-info/
+*.egg
 dist/
 build/
 .eggs/
-*.egg
 .venv/
 venv/
 env/
+*.whl
 
 # Node
 node_modules/
-frontend/dist/
-frontend/build/
+dashboard/dist/
+dashboard/.vite/
+.npm
 *.tsbuildinfo
+
+# Jetson / AI Model Weights
+*.engine
+*.onnx
+*.pt
+*.pth
+*.weights
+*.trt
+*.plan
+edge/models/*.engine
+edge/models/*.onnx
+edge/models/*.pt
+edge/models/*.pth
+edge/models/*.trt
 
 # Environment
 .env
 .env.local
 .env.production
+.env.*.local
+
+# Logs
+*.log
+logs/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+data/seen_it_first.db
 
 # IDE
 .vscode/
@@ -33,43 +60,24 @@ frontend/build/
 # OS
 .DS_Store
 Thumbs.db
-
-# AI Models (large binary files)
-ai/models/*.onnx
-ai/models/*.engine
-ai/models/*.trt
-ai/models/*.pt
-ai/models/*.pth
-
-# Database
-*.db
-*.sqlite3
-
-# Logs
-*.log
-logs/
+desktop.ini
 
 # Docker
 docker-compose.override.yml
 
-# Coverage
-htmlcov/
-.coverage
-.pytest_cache/
-
-# Jupyter
-.ipynb_checkpoints/
-
-# Captures & temp data
+# Data / Captures
+data/
 captures/
-tmp/
+snapshots/
+clips/
 
-# Ruff cache
-.ruff_cache/
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
 
-# Root-level lock file (not a real project; frontend has its own)
-/package-lock.json
-
-# Android build artifacts
-RepoScanPro.zip
-RepoScanPro/local.properties
+# Build artifacts
+*.o
+*.a
+*.dylib

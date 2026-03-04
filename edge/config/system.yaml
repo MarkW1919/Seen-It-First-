@@ -1,0 +1,41 @@
+# SEEN IT FIRST - System Configuration
+# Target platform: NVIDIA Jetson Orin Nano Super
+
+database:
+  path: data/seen_it_first.db
+  wal_mode: true
+  busy_timeout_ms: 5000
+
+logging:
+  level: INFO
+  format: json
+  file: logs/seen_it_first.log
+  max_bytes: 10485760  # 10 MB
+  backup_count: 5
+
+thermal:
+  check_interval_sec: 5
+  thresholds:
+    warning: 75
+    high: 85
+    critical: 90
+    emergency: 95
+  recovery_hysteresis: 5
+
+hotlist:
+  cooldown_seconds: 60
+  alert_confidence_threshold: 0.70
+
+night_mode:
+  brightness_activate: 60
+  brightness_deactivate: 80
+
+api:
+  host: 0.0.0.0
+  port: 8000
+  cors_origins:
+    - "http://localhost:3000"
+
+data_dir: data/
+capture_dir: data/captures/
+clip_dir: data/clips/

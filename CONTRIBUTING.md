@@ -1,79 +1,82 @@
-# Contributing to RepoScan Pro
+# Contributing to SEEN IT FIRST
 
-## Getting Started
+## Branch Strategy
 
-1. Fork and clone the repository
-2. Follow the [Local Development Guide](docs/LOCAL_DEV.md) to set up your environment
-3. Create a feature branch from `main`
+| Branch         | Purpose                                  |
+|----------------|------------------------------------------|
+| `main`         | Production-ready releases                |
+| `develop`      | Integration branch for active work       |
+| `feature/*`    | New features (branch from develop)       |
+| `hotfix/*`     | Critical production fixes (branch from main) |
+| `model/*`      | AI model training, tuning, conversion    |
+| `dashboard/*`  | Dashboard UI changes                     |
 
-## Development Workflow
+## Feature Branch Workflow
 
-```bash
-# Create a branch
-git checkout -b feature/my-feature
+1. Create branch from `develop`:
+   ```bash
+   git checkout develop
+   git pull origin develop
+   git checkout -b feature/your-feature-name
+   ```
 
-# Make changes, then run checks
-cd frontend && npm run lint && npm test
-cd ../backend && ruff check . && pytest
+2. Make changes, commit with conventional messages.
 
-# Commit and push
-git add -A && git commit -m "feat: description of change"
-git push -u origin feature/my-feature
+3. Push and open a pull request into `develop`:
+   ```bash
+   git push -u origin feature/your-feature-name
+   ```
+
+4. After review, merge into `develop`. When `develop` is stable, merge into `main`.
+
+## Commit Conventions
+
+Use [Conventional Commits](https://www.conventionalcommits.org/):
+
+```
+feat: add plate OCR confidence boosting
+fix: resolve camera reconnect deadlock on Housing B
+docs: update inference scheduling table
+refactor: extract thermal monitor to utils
+test: add fusion engine hotlist matching tests
+chore: update TensorRT dependency to 10.x
 ```
 
-## Code Standards
+**Scope prefixes** (when useful):
 
-### Frontend (TypeScript/React)
-- ESLint flat config (`eslint.config.js`) enforces rules automatically
-- Run `npm run lint` before committing
-- Write tests in Vitest for new components and utilities
-- Use the `@/` path alias for imports
-
-### Backend (Python/FastAPI)
-- **Ruff** for linting and formatting (configured in `ruff.toml`)
-- Run `ruff check .` and `ruff format --check .`
-- Write pytest tests for new endpoints and services
-- Use async patterns consistently (SQLAlchemy async sessions)
-
-### Commit Messages
-- Use [Conventional Commits](https://www.conventionalcommits.org/):
-  - `feat:` new feature
-  - `fix:` bug fix
-  - `docs:` documentation
-  - `test:` adding or updating tests
-  - `chore:` maintenance tasks
-
-## Pre-commit Hooks
-
-Install pre-commit hooks to automate checks:
-
-```bash
-pip install pre-commit
-pre-commit install
+```
+feat(camera): add IMX462 CSI pipeline auto-detection
+fix(api): correct WebSocket heartbeat interval
+feat(dashboard): add PTZ preset quick-select buttons
 ```
 
-This runs secret detection, linting, and formatting on every commit.
+## Code Style
+
+**Python (edge/):**
+- Python 3.10+
+- Format with `ruff format`
+- Lint with `ruff check`
+- Type hints on public functions
+- Docstrings on modules and classes
+
+**TypeScript (dashboard/):**
+- Strict mode enabled
+- Format with Prettier
+- Lint with ESLint
+- Functional React components with hooks
 
 ## Testing
 
-| Layer | Framework | Command |
-|-------|-----------|---------|
-| Frontend | Vitest + Testing Library | `cd frontend && npm test` |
-| Backend | pytest + pytest-asyncio | `cd backend && pytest` |
-| Integration | Docker Compose | `./tests/integration/test_stack.sh` |
+- Python tests: `pytest tests/`
+- Dashboard tests: `cd dashboard && npm test`
+- Verify Python syntax: `python3 -m py_compile edge/main.py`
 
 ## Pull Request Checklist
 
-- [ ] Tests pass locally (`npm test` and `pytest`)
-- [ ] Linting passes (`eslint .` and `ruff check .`)
-- [ ] New features include tests
-- [ ] Database changes include an Alembic migration
-- [ ] PR description explains the "why" not just the "what"
-
-## Project Layout
-
-See [docs/LOCAL_DEV.md](docs/LOCAL_DEV.md) for the full project structure.
-
-## Questions?
-
-Open an issue on GitHub for bugs, feature requests, or questions.
+- [ ] Code follows the style guidelines
+- [ ] Self-review completed
+- [ ] Tests added for new functionality
+- [ ] All existing tests pass
+- [ ] Documentation updated if needed
+- [ ] No hardcoded IPs, paths, or secrets
+- [ ] Configuration changes use YAML config files

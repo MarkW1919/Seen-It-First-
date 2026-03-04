@@ -1,172 +1,65 @@
+# SEEN IT FIRST — Development Docker Compose
+# Production deployment uses systemd (see deployment/systemd/)
+# This file is for development and testing ONLY.
+
 services:
-  # ─── PostgreSQL + PostGIS ───
-  db:
-    image: postgis/postgis:16-3.4
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-reposcan}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
-      POSTGRES_DB: ${POSTGRES_DB:-reposcan}
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    # Database port NOT exposed to host — only accessible within Docker network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-reposcan}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # ─── Redis ───
-  redis:
-    image: redis:7.4-alpine
-    restart: unless-stopped
-    command: >
-      redis-server
-      --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
-      --maxmemory 256mb
-      --maxmemory-policy allkeys-lru
-    # Redis port NOT exposed to host — only accessible within Docker network
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # ─── Backend API ───
-  backend:
+  edge:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    env_file: .env
-    # Backend port NOT exposed to host — Nginx reverse proxy handles external access
-    volumes:
-      - capture_data:/data/captures
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  # ─── AI Pipeline ───
-  ai:
-    build:
-      context: ./ai
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    env_file: .env
+      context: .
+      dockerfile: deployment/docker/edge.Dockerfile
+    container_name: sif-edge
     runtime: nvidia
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-        limits:
-          memory: 6G
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - SIF_CONFIG_DIR=/app/edge/config
+      - SIF_DATA_DIR=/data
+      - SIF_LOG_LEVEL=DEBUG
     volumes:
-      - ai_models:/app/models
-      - capture_data:/data/captures
-    depends_on:
-      backend:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "python3", "-c", "import torch; assert torch.cuda.is_available()"]
-      interval: 60s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-
-  # ─── Camera Service ───
-  camera:
-    build:
-      context: ./camera
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    env_file: .env
-    # Use specific device access instead of privileged mode
+      - ./edge:/app/edge
+      - model-data:/app/edge/models
+      - sif-data:/data
     devices:
       - /dev/video0:/dev/video0
-    group_add:
-      - video
-    volumes:
-      - capture_data:/data/captures
-    # RTSP port NOT exposed to host — only accessible within Docker network
-    depends_on:
-      - ai
+      - /dev/video1:/dev/video1
+      - /dev/video2:/dev/video2
+      - /dev/video3:/dev/video3
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python3", "-c", "import cv2; print('ok')"]
-      interval: 60s
+      test: ["CMD", "curl", "-f", "http://localhost:8000/system/status"]
+      interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 15s
 
-  # ─── Frontend ───
-  frontend:
+  api:
     build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    # Frontend port NOT exposed to host — Nginx reverse proxy handles external access
-    depends_on:
-      - backend
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:5173/"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-
-  # ─── Nginx Reverse Proxy ───
-  nginx:
-    image: nginx:1.27-alpine
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./deploy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./deploy/nginx/ssl:/etc/nginx/ssl:ro
-    depends_on:
-      - backend
-      - frontend
-
-  # ─── Prometheus Monitoring ───
-  prometheus:
-    image: prom/prometheus:v3.2.1
-    restart: unless-stopped
-    volumes:
-      - ./deploy/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus_data:/prometheus
-    # Prometheus port NOT exposed to host — Nginx proxy required
-
-  # ─── Grafana Dashboard ───
-  grafana:
-    image: grafana/grafana:11.5.2
-    restart: unless-stopped
+      context: .
+      dockerfile: deployment/docker/api.Dockerfile
+    container_name: sif-api
     environment:
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:?GRAFANA_PASSWORD is required}
-      GF_USERS_ALLOW_SIGN_UP: "false"
-      GF_SECURITY_COOKIE_SECURE: "true"
-      GF_SECURITY_STRICT_TRANSPORT_SECURITY: "true"
+      - SIF_DB_PATH=/data/seen_it_first.db
+      - SIF_LOG_LEVEL=DEBUG
     volumes:
-      - grafana_data:/var/lib/grafana
-      - ./deploy/monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
-    # Grafana port NOT exposed to host — Nginx proxy required
+      - ./edge:/app/edge
+      - sif-data:/data
+    ports:
+      - "8001:8000"
+    restart: unless-stopped
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: deployment/docker/dashboard.Dockerfile
+    container_name: sif-dashboard
+    ports:
+      - "3000:80"
     depends_on:
-      - prometheus
+      - api
+    restart: unless-stopped
 
 volumes:
-  pgdata:
-  redis_data:
-  capture_data:
-  ai_models:
-  prometheus_data:
-  grafana_data:
+  model-data:
+    driver: local
+  sif-data:
+    driver: local

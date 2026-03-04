@@ -1,0 +1,68 @@
+# SEEN IT FIRST - Inference Pipeline Configuration
+# Model selections are locked -- do not change without full regression testing.
+# Target platform: NVIDIA Jetson Orin Nano Super (TensorRT acceleration)
+
+models:
+  vehicle_detector:
+    architecture: YOLOv8n
+    engine_path: models/vehicle_detector.engine
+    onnx_path: models/vehicle_detector.onnx
+    input_width: 640
+    input_height: 640
+    precision: FP16
+    confidence_threshold: 0.45
+    nms_iou_threshold: 0.45
+    # COCO class IDs: 2=car, 3=motorcycle, 5=bus, 7=truck
+    target_classes: [2, 3, 5, 7]
+    class_names:
+      2: car
+      3: motorcycle
+      5: bus
+      7: truck
+
+  plate_detector:
+    architecture: YOLOv8s
+    engine_path: models/plate_detector.engine
+    onnx_path: models/plate_detector.onnx
+    input_width: 640
+    input_height: 640
+    precision: FP16
+    confidence_threshold: 0.55
+    nms_iou_threshold: 0.3
+
+  ocr:
+    architecture: CRNN
+    engine_path: models/ocr_crnn.engine
+    onnx_path: models/ocr_crnn.onnx
+    input_width: 160
+    input_height: 32
+    precision: FP16
+    min_plate_length: 2
+    max_plate_length: 8
+    # US plates only -- alphabet includes digits + uppercase + common special chars
+    charset: "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+  vehicle_classifier:
+    architecture: EfficientNet-Lite0
+    engine_path: models/vehicle_classifier.engine
+    onnx_path: models/vehicle_classifier.onnx
+    input_width: 224
+    input_height: 224
+    precision: INT8
+    calibration_cache: models/vehicle_classifier_calib.cache
+
+  tracker:
+    algorithm: DeepSORT
+    max_age: 30
+    n_init: 2
+    max_cosine_distance: 0.3
+    nn_budget: 100
+    embedding_dim: 128
+    embedding_engine_path: models/reid_embedding.engine
+    embedding_onnx_path: models/reid_embedding.onnx
+
+scheduling:
+  skip_frames: 2
+  max_concurrent_engines: 2
+  backpressure_threshold_ms: 80
+  engine_warmup_iterations: 5

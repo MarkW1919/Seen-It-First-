@@ -1,98 +1,128 @@
-# RepoScan Pro
+# SEEN IT FIRST
 
-AI-powered License Plate Recognition (LPR) and Vehicle Detection system built for repossession agents and tow truck operators. Runs on NVIDIA Jetson Orin Nano Super with Sony Starvis 2 IMX685 camera.
+Edge AI vehicle identification and license plate recognition system built for NVIDIA Jetson Orin Nano Super.
 
-## Architecture
+## System Overview
+
+SEEN IT FIRST is a real-time, vehicle-mounted LPR system that captures, identifies, and alerts on vehicles of interest using 4 simultaneous camera streams processed by a cascaded AI inference pipeline. The system runs entirely on-device with no cloud dependency.
+
+**US license plates only.** All OCR, validation, and formatting rules target US plate standards.
+
+## Hardware Architecture
 
 ```
-┌──────────────────────────────────────────────────────┐
-│  Frontend PWA (Vite + React 18 + TypeScript)         │
-│  Tailwind CSS · Leaflet Maps · Zustand · TanStack    │
-├──────────────────────────────────────────────────────┤
-│  Nginx Reverse Proxy (SSL · WebSocket · RTSP)        │
-├──────────────────────────────────────────────────────┤
-│  Backend API (FastAPI · async SQLAlchemy 2.0)        │
-│  PostgreSQL+PostGIS · Redis · JWT · WebSocket        │
-├──────────────────────────────────────────────────────┤
-│  AI Pipeline (TensorRT · YOLOv8 · CRNN · DeepSORT)  │
-│  Vehicle Detection · Plate OCR · YMM Classification  │
-├──────────────────────────────────────────────────────┤
-│  Camera Layer (GStreamer · MIPI CSI-2 · PTZ · RTSP)  │
-│  Sony IMX685 · Night Vision · Auto-Tracking          │
-├──────────────────────────────────────────────────────┤
-│  Jetson Orin Nano Super (8GB) · 15W · CUDA · DLA    │
-└──────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────┐
+│              Jetson Orin Nano Super              │
+│  8GB VRAM · 1024 CUDA cores · JetPack 6.x       │
+│                                                   │
+│  ┌─────────────┐   ┌─────────────┐               │
+│  │  Housing A   │   │  Housing B   │              │
+│  │ IMX462 (LPR) │   │ IMX462 (LPR) │             │
+│  │ IMX327 (Wide)│   │ IMX327 (Wide)│             │
+│  │ 850nm IR     │   │ 850nm IR     │             │
+│  └─────────────┘   └─────────────┘               │
+│                                                   │
+│  Target: 80–100 ft plate read range              │
+│  4 cameras · 30 FPS capture · 15 FPS inference   │
+└─────────────────────────────────────────────────┘
 ```
 
-## Quick Start
+## Inference Pipeline
+
+Cascaded inference — each stage fires only when the prior stage qualifies:
+
+| Stage              | Frequency   | Scope              | Trigger                          |
+|--------------------|-------------|---------------------|----------------------------------|
+| Frame Capture      | 30 FPS      | Full frame          | Always (NVDEC hardware decode)   |
+| Vehicle Detection  | 15 FPS      | Full frame 640x640  | Every 2nd captured frame         |
+| Plate Detection    | On demand   | Vehicle ROI only    | Vehicle confidence >= 0.45       |
+| OCR                | On demand   | Plate ROI only      | Plate confidence >= 0.55         |
+| Vehicle Classifier | Once/track  | Best vehicle crop   | New confirmed DeepSORT track     |
+| DeepSORT Tracker   | 15 FPS      | Detection boxes     | Vehicle detection output         |
+
+## GPU Memory Budget
+
+| Component             | VRAM (MB) |
+|-----------------------|-----------|
+| YOLOv8n vehicle det   | 180       |
+| YOLOv8s plate det     | 280       |
+| CRNN OCR              | 50        |
+| EfficientNet-Lite0    | 60        |
+| DeepSORT ReID         | 40        |
+| CUDA context + buffers| 550       |
+| **Total**             | **1,160** |
+
+Budget cap: 75% of 8 GB VRAM (6,144 MB). Headroom: ~5 GB.
+
+## Thermal Protection
+
+| GPU Temp | Action                                      |
+|----------|---------------------------------------------|
+| < 75C    | Full operation: 15 FPS detection            |
+| 75-84C   | Reduce to 10 FPS detection                  |
+| 85-89C   | Reduce to 8 FPS detection                   |
+| >= 90C   | Suspend classifier, detection at 5 FPS      |
+| >= 95C   | Suspend all inference, critical alert        |
+
+## Folder Structure
+
+```
+edge/              Jetson-side AI system
+  camera/          GStreamer capture, multi-stream manager, health monitoring
+  inference/       YOLOv8 detection, CRNN OCR, EfficientNet classifier, DeepSORT
+  models/          TensorRT engine files (gitignored)
+  fusion/          Plate + vehicle fusion, confidence scoring, hotlist matching
+  night/           ROI-only CLAHE enhancement, exposure hooks
+  ptz/             Pelco-D / ONVIF PTZ control, auto-tracking
+  database/        SQLite connection, schema, repository
+  api/             FastAPI REST + WebSocket endpoints
+  utils/           Logging, image helpers, thermal monitoring
+  config/          YAML configuration files
+  main.py          System entry point
+
+dashboard/         Windows tactical UI (React + Vite + TypeScript + Tailwind)
+deployment/        Dockerfiles (dev), systemd (prod), nginx, Jetson setup guide
+docs/              Architecture and performance tuning documentation
+scripts/           Model download and TensorRT conversion utilities
+tests/             Integration and system tests
+```
+
+## Development Workflow
+
+Docker Compose is provided for development only:
 
 ```bash
-# 1. Clone and configure
-cp .env.example .env
-# Edit .env with your settings
+# Start development environment
+docker compose up --build
 
-# 2. Launch all services
-docker compose up -d
+# Run edge system locally (requires Jetson or CUDA GPU)
+cd edge && python main.py
 
-# 3. Open the PWA
-# Navigate to http://localhost in your browser
+# Run dashboard dev server
+cd dashboard && npm install && npm run dev
 ```
 
-## Tech Stack
+## Production Deployment
 
-| Layer | Technology | Why |
-|-------|-----------|-----|
-| Frontend | Vite + React 18 + TypeScript | Fast builds, type safety, modern DX |
-| Styling | Tailwind CSS | Utility-first, rapid dark-mode UI |
-| State | Zustand + TanStack Query | Lightweight state + smart data caching |
-| Maps | Leaflet + OpenStreetMap | Free, no API key required |
-| Backend | FastAPI + async SQLAlchemy 2.0 | High-perf async Python API |
-| Database | PostgreSQL 16 + PostGIS | Spatial queries for GPS data |
-| Cache | Redis 7 | Hot list caching, pub/sub alerts |
-| AI/ML | TensorRT + YOLOv8 + CRNN | Optimized inference on Jetson |
-| Tracking | DeepSORT | Multi-object tracking across frames |
-| Camera | GStreamer + Argus | Hardware-accelerated video pipeline |
-| Deploy | Docker Compose + systemd | Container orchestration + auto-start |
-| Monitor | Prometheus + Grafana | System health and performance |
+Production runs via **systemd** (not Docker). The dashboard is pre-built as a static SPA and served by nginx.
 
-## Key Features
+```bash
+# On Jetson: install and start
+sudo cp deployment/systemd/*.service /etc/systemd/system/
+sudo systemctl enable --now seen-it-first-edge
 
-- **Real-time LPR** — 25-30 FPS plate detection and OCR for all 50 US states
-- **Hot List Alerts** — Instant audio/visual alerts when a target plate is spotted
-- **Vehicle Classification** — Year, make, model, and color identification
-- **Night Vision** — Sony Starvis 2 IMX685 with IR LED control
-- **GPS Mapping** — Live tracking, route history, and detection heatmaps
-- **Offline PWA** — Full functionality without internet, syncs when connected
-- **PTZ Auto-Tracking** — Camera follows detected vehicles automatically
-- **Multi-agent Support** — Role-based access for teams
-
-## Project Structure
-
-```
-├── backend/       FastAPI server, database models, auth, WebSocket
-├── frontend/      React PWA with Tailwind, maps, real-time alerts
-├── ai/            TensorRT inference pipeline, models, tracking
-├── camera/        GStreamer capture, PTZ control, RTSP streaming
-├── deploy/        Nginx, Prometheus, Grafana, systemd, scripts
-└── docs/          Hardware guide, API reference, quick start
+# Build dashboard static files (one-time, or on update)
+cd dashboard && npm run build
+# nginx serves dashboard/dist/ and proxies /api/ to uvicorn
 ```
 
-## Hardware Requirements
+See `deployment/jetson-setup.md` for full installation guide.
 
-- **Compute**: NVIDIA Jetson Orin Nano Super (8GB)
-- **Camera**: Sony Starvis 2 IMX685 (MIPI CSI-2)
-- **Storage**: 1TB NVMe SSD
-- **Network**: 4G/5G modem or WiFi
-- **Power**: 15W vehicle power adapter
+## Performance Targets
 
-## Performance
-
-| Metric | Target |
-|--------|--------|
-| Detection FPS | 25-30 @ 1080p |
-| LPR Accuracy (Day) | 92-95% |
-| LPR Accuracy (Night) | 85-90% |
-| End-to-End Latency | <500ms |
-| Hot List Match | <100ms |
-| Power Draw | 10-15W |
-| Memory | <6GB |
+- 30 FPS ingest per camera (NVDEC hardware decode)
+- 12-15 FPS vehicle detection per camera
+- < 2 second hotlist alert latency
+- <= 3 GB total GPU memory usage
+- Stable operation in 90F+ ambient temperature
+- < 5% dropped frames under full load
