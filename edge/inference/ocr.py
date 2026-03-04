@@ -3,7 +3,7 @@ License plate OCR using lightweight CRNN TensorRT engine.
 
 US plates only. No EU/International support in Phase 1.
 Character set restricted to A-Z 0-9.
-Validation regex: ^[A-Z0-9]{5,8}$
+Validation regex: ^[A-Z0-9]{2,8}$
 
 Phase 1: Uses pretrained CRNN OCR model. No custom training required.
 Fine-tuning pipeline deferred to Phase 3.
@@ -28,8 +28,8 @@ logger = logging.getLogger(__name__)
 # US plate character set (A-Z 0-9 only, no EU/International)
 PLATE_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
-# US plate validation: 5-8 alphanumeric characters
-US_PLATE_REGEX = re.compile(r"^[A-Z0-9]{5,8}$")
+# US plate validation: 2-8 alphanumeric characters
+US_PLATE_REGEX = re.compile(r"^[A-Z0-9]{2,8}$")
 CHAR_TO_IDX = {c: i for i, c in enumerate(PLATE_CHARS)}
 IDX_TO_CHAR = {i: c for i, c in enumerate(PLATE_CHARS)}
 
@@ -77,7 +77,7 @@ class PlateOCR:
         self.input_width = config.get("input_width", 200)
         self.input_height = config.get("input_height", 64)
         self.conf_threshold = config.get("confidence_threshold", 0.60)
-        self.min_chars = config.get("min_plate_chars", 5)
+        self.min_chars = config.get("min_plate_chars", 2)
         self.max_chars = config.get("max_plate_chars", 8)
         self.engine = TRTEngine(self.model_path)
         self._inference_time_ms = 0.0
@@ -218,8 +218,8 @@ class PlateOCR:
 
         - Uppercase normalization
         - Strip spaces and special characters
-        - Enforce 5-8 character constraint
-        - Validate against US plate regex: ^[A-Z0-9]{5,8}$
+        - Enforce 2-8 character constraint
+        - Validate against US plate regex: ^[A-Z0-9]{2,8}$
         """
         # Uppercase and strip
         cleaned = text.upper().strip()
@@ -233,7 +233,7 @@ class PlateOCR:
     def validate_plate(text: str) -> bool:
         """Validate a plate string against US plate format.
 
-        US plates only: 5-8 uppercase alphanumeric characters.
+        US plates only: 2-8 uppercase alphanumeric characters.
         No EU/International formats supported in Phase 1.
         """
         return bool(US_PLATE_REGEX.match(text))

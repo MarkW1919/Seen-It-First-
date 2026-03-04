@@ -58,12 +58,12 @@ inference:
     input_width: 200
     input_height: 64
     confidence_threshold: 0.60
-    min_plate_chars: 5
+    min_plate_chars: 2
     max_plate_chars: 8
     precision: "fp16"
     pretrained: true  # Pretrained CRNN, no custom training needed
     charset: "A-Z0-9"  # US plates only
-    validation_regex: "^[A-Z0-9]{5,8}$"
+    validation_regex: "^[A-Z0-9]{2,8}$"
     # Budget: ~30 MB VRAM
 
   classifier:
