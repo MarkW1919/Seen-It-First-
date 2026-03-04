@@ -39,7 +39,10 @@ class VehicleClassifier:
     """
     EfficientNet-Lite0 vehicle classifier.
 
-    Model: EfficientNet-Lite0 → TensorRT INT8
+    Phase 1: Uses pretrained EfficientNet-Lite0. No custom training required.
+    Fine-tuning pipeline deferred to Phase 3.
+
+    Model: EfficientNet-Lite0 pretrained → TensorRT INT8
     Input: 224x224 RGB
     Engine size: ~5 MB
     VRAM footprint: ~15 MB

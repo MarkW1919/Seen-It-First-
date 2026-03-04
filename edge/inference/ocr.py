@@ -1,6 +1,13 @@
 """
 License plate OCR using lightweight CRNN TensorRT engine.
 
+US plates only. No EU/International support in Phase 1.
+Character set restricted to A-Z 0-9.
+Validation regex: ^[A-Z0-9]{5,8}$
+
+Phase 1: Uses pretrained CRNN OCR model. No custom training required.
+Fine-tuning pipeline deferred to Phase 3.
+
 Runs ONLY when plate confidence exceeds threshold.
 Includes rule-based post-processing for US plates.
 """
@@ -18,8 +25,11 @@ from edge.inference.plate_detector import PlateDetection
 
 logger = logging.getLogger(__name__)
 
-# US plate character set
+# US plate character set (A-Z 0-9 only, no EU/International)
 PLATE_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+# US plate validation: 5-8 alphanumeric characters
+US_PLATE_REGEX = re.compile(r"^[A-Z0-9]{5,8}$")
 CHAR_TO_IDX = {c: i for i, c in enumerate(PLATE_CHARS)}
 IDX_TO_CHAR = {i: c for i, c in enumerate(PLATE_CHARS)}
 
@@ -51,9 +61,12 @@ class OCRResult:
 
 class PlateOCR:
     """
-    CRNN-based license plate OCR.
+    CRNN-based license plate OCR (US plates only).
 
-    Model: Lightweight CRNN trained on US plate fonts → TensorRT FP16
+    Phase 1: Uses pretrained CRNN model. No custom training required.
+    Fine-tuning with nighttime datasets deferred to Phase 3.
+
+    Model: Pretrained CRNN OCR → TensorRT FP16
     Input: 200x64 grayscale
     Engine size: ~8 MB
     VRAM footprint: ~30 MB
@@ -110,7 +123,7 @@ class PlateOCR:
 
             if (
                 confidence >= self.conf_threshold
-                and self.min_chars <= len(cleaned) <= self.max_chars
+                and self.validate_plate(cleaned)
             ):
                 results.append(OCRResult(
                     text=cleaned,
@@ -206,6 +219,7 @@ class PlateOCR:
         - Uppercase normalization
         - Strip spaces and special characters
         - Enforce 5-8 character constraint
+        - Validate against US plate regex: ^[A-Z0-9]{5,8}$
         """
         # Uppercase and strip
         cleaned = text.upper().strip()
@@ -214,6 +228,15 @@ class PlateOCR:
         cleaned = re.sub(r"[^A-Z0-9]", "", cleaned)
 
         return cleaned
+
+    @staticmethod
+    def validate_plate(text: str) -> bool:
+        """Validate a plate string against US plate format.
+
+        US plates only: 5-8 uppercase alphanumeric characters.
+        No EU/International formats supported in Phase 1.
+        """
+        return bool(US_PLATE_REGEX.match(text))
 
     @property
     def inference_time_ms(self) -> float:

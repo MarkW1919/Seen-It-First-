@@ -37,6 +37,9 @@ class VehicleDetector:
     """
     YOLOv8n vehicle detector.
 
+    Phase 1: Uses pretrained YOLOv8n (COCO). No custom training required.
+    Fine-tuning pipeline deferred to Phase 3.
+
     Model: YOLOv8n (COCO pretrained) → TensorRT FP16
     Input: 640x640 RGB
     Engine size: ~12 MB

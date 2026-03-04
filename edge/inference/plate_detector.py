@@ -31,9 +31,13 @@ class PlateDetection:
 
 class PlateDetector:
     """
-    YOLOv8s plate detector.
+    YOLOv8s plate detector (US plates only).
 
-    Model: YOLOv8s fine-tuned on US license plate datasets → TensorRT FP16
+    Phase 1: Uses pretrained YOLOv8s US-plate detection model.
+    No custom fine-tuning required for deployment.
+    Fine-tuning pipeline deferred to Phase 3.
+
+    Model: YOLOv8s pretrained US plate detection → TensorRT FP16
     Input: 640x640 RGB (vehicle crop)
     Engine size: ~45 MB
     VRAM footprint: ~90 MB

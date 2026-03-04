@@ -7,13 +7,31 @@ Edge-only AI license plate recognition system for NVIDIA Jetson Orin Nano Super.
 Detect and read US license plates at night (80–100 ft range) using 2–4 cameras.
 No cloud. No Docker in production. Single-process edge service.
 
+**US plates only.** No EU/International plate support in Phase 1.
+Character set: A-Z 0-9. Validation regex: `^[A-Z0-9]{5,8}$`
+
+### Model Strategy (Phase 1)
+
+All models are **pretrained**. No custom training, fine-tuning, or dataset
+creation is required for Phase 1 deployment.
+
+| Model | Source | Custom Training |
+|-------|--------|-----------------|
+| YOLOv8n (vehicle) | COCO pretrained | Not required |
+| YOLOv8s (plate) | Pretrained US-plate model | Not required |
+| CRNN (OCR) | Pretrained OCR model | Not required |
+| EfficientNet-Lite0 (classifier) | Pretrained | Not required |
+
+Custom fine-tuning pipelines (nighttime datasets, model re-export) are
+deferred to **Phase 3**. See `ai/training_phase3/README.md`.
+
 ### Capabilities
 
 - **Camera ingestion**: 4x RTSP/CSI cameras at 30 FPS via GStreamer + NVDEC
-- **Vehicle detection**: YOLOv8n at 12–15 FPS (TensorRT FP16)
-- **Plate detection**: YOLOv8s on vehicle crops only (TensorRT FP16)
-- **OCR**: Lightweight CRNN with US plate post-processing (TensorRT FP16)
-- **Classification**: EfficientNet-Lite0 for color/year bucket (TensorRT INT8)
+- **Vehicle detection**: YOLOv8n pretrained at 12–15 FPS (TensorRT FP16)
+- **Plate detection**: YOLOv8s pretrained US-plate model on vehicle crops only (TensorRT FP16)
+- **OCR**: Pretrained CRNN with US plate post-processing (TensorRT FP16)
+- **Classification**: EfficientNet-Lite0 pretrained for color/year bucket (TensorRT INT8)
 - **Tracking**: Lightweight DeepSORT (IoU + appearance embedding)
 - **Hotlist matching**: In-memory set with 60s cooldown, console + audio alerts
 - **Storage**: SQLite with WAL mode
@@ -70,6 +88,8 @@ edge/
 
 models/              # TensorRT engine files (not in git)
 systemd/             # systemd service file
+ai/training_phase3/  # Phase 3 fine-tuning (not required for Phase 1)
+docs/                # Build rules and documentation
 ```
 
 ## Setup

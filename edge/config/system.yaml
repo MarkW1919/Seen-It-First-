@@ -1,5 +1,15 @@
 # Seen-It-First-Edge System Configuration
 # NVIDIA Jetson Orin Nano Super - Phase 1
+#
+# MODEL STRATEGY (Phase 1):
+#   All models are PRETRAINED. No custom training or fine-tuning required.
+#   - YOLOv8n: COCO pretrained (vehicle detection)
+#   - YOLOv8s: Pretrained US-plate detection model
+#   - CRNN: Pretrained OCR model
+#   - EfficientNet-Lite0: Pretrained classifier
+#   Custom fine-tuning pipelines are deferred to Phase 3.
+#
+# SCOPE: US plates only. No EU/International support.
 
 system:
   device: "jetson-orin-nano-super"
@@ -16,6 +26,11 @@ cameras:
   protocol: "rtsp"  # rtsp or csi
 
 inference:
+  # Max 2 concurrent inference workers (GPU memory constraint)
+  max_concurrent_workers: 2
+  # Frame skipping enabled (drop oldest on queue overflow)
+  frame_skip_enabled: true
+
   vehicle_detection:
     model_path: "models/vehicle/yolov8n.engine"
     input_size: 640
@@ -23,7 +38,9 @@ inference:
     nms_threshold: 0.5
     max_fps: 15
     precision: "fp16"
+    pretrained: true  # COCO pretrained, no custom training needed
     # Budget: ~45 MB VRAM
+    # DO NOT upgrade to YOLOv8s/m/l - GPU budget locked
 
   plate_detection:
     model_path: "models/plate/yolov8s_plate.engine"
@@ -31,7 +48,10 @@ inference:
     confidence_threshold: 0.50
     nms_threshold: 0.4
     precision: "fp16"
+    pretrained: true  # Pretrained US-plate model, no fine-tuning needed
+    scope: "us_only"  # No EU/International support in Phase 1
     # Budget: ~90 MB VRAM
+    # DO NOT upgrade to YOLOv8m/l - GPU budget locked
 
   ocr:
     model_path: "models/ocr/crnn_plate.engine"
@@ -41,12 +61,16 @@ inference:
     min_plate_chars: 5
     max_plate_chars: 8
     precision: "fp16"
+    pretrained: true  # Pretrained CRNN, no custom training needed
+    charset: "A-Z0-9"  # US plates only
+    validation_regex: "^[A-Z0-9]{5,8}$"
     # Budget: ~30 MB VRAM
 
   classifier:
     model_path: "models/classifier/efficientnet_lite0.engine"
     input_size: 224
     precision: "int8"
+    pretrained: true  # Pretrained EfficientNet-Lite0, no custom training needed
     # Budget: ~15 MB VRAM
 
   tracker:
