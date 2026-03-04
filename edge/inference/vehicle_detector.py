@@ -58,6 +58,10 @@ class VehicleDetector:
         """Load the TensorRT engine."""
         return self.engine.load()
 
+    @property
+    def is_loaded(self) -> bool:
+        return self.engine.is_loaded
+
     def detect(self, frame: np.ndarray) -> list[VehicleDetection]:
         """
         Detect vehicles in a frame.

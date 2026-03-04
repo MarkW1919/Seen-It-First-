@@ -123,15 +123,15 @@ class InferenceScheduler:
         result.night_mode = self._check_night_mode(cam_id, frame)
 
         # Stage 1: Vehicle detection (full frame)
-        if self.vehicle_detector is not None:
+        if self.vehicle_detector is not None and self.vehicle_detector.is_loaded:
             result.vehicles = self.vehicle_detector.detect(frame)
 
         # Stage 2: Plate detection (vehicle crops only)
-        if self.plate_detector is not None and result.vehicles:
+        if self.plate_detector is not None and self.plate_detector.is_loaded and result.vehicles:
             result.plates = self.plate_detector.detect(frame, result.vehicles)
 
         # Stage 3: OCR (plates above confidence threshold only)
-        if self.ocr is not None and result.plates:
+        if self.ocr is not None and self.ocr.is_loaded and result.plates:
             result.ocr_results = self.ocr.recognize(
                 frame, result.plates, night_mode=result.night_mode
             )
@@ -151,7 +151,7 @@ class InferenceScheduler:
         self._associate_plates_to_tracks(result)
 
         # Stage 6: Classifier (once per confirmed, unclassified track)
-        if self.classifier is not None and not self.classifier.is_suspended:
+        if self.classifier is not None and self.classifier.is_loaded and not self.classifier.is_suspended:
             for track in result.tracks:
                 if track.confirmed and not track.classified:
                     crop = self._crop_track(frame, track)

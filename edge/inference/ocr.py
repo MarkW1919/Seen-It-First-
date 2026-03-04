@@ -85,6 +85,10 @@ class PlateOCR:
     def load(self) -> bool:
         return self.engine.load()
 
+    @property
+    def is_loaded(self) -> bool:
+        return self.engine.is_loaded
+
     def recognize(
         self,
         frame: np.ndarray,
