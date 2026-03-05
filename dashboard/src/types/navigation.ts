@@ -18,7 +18,7 @@ export interface RouteResponse {
 
 export interface NavStatus {
   navigating: boolean;
-  destination: { lat: number; lon: number; display_name: string } | null;
+  destination: { lat: number; lon: number; display_name: string; radius_ft?: number; radius_m?: number } | null;
   current_pos: LatLon | null;
   pipeline_active: boolean;
   arrival: {
@@ -27,6 +27,7 @@ export interface NavStatus {
     destination: LatLon | null;
     last_distance_m: number | null;
     radius_m: number;
+    cooldown_remaining_s: number;
   };
   ws_clients: number;
 }

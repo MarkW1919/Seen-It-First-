@@ -53,7 +53,6 @@ class ConnectionManager:
         logger.debug("WS client connected (total=%d)", len(self._clients))
 
     def disconnect(self, ws: WebSocket):
-        self._clients.discard(ws) if hasattr(self._clients, "discard") else None
         if ws in self._clients:
             self._clients.remove(ws)
         logger.debug("WS client disconnected (total=%d)", len(self._clients))
