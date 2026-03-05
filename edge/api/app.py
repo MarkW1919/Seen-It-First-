@@ -30,6 +30,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from edge.navigation.geocoder import Geocoder
 from edge.navigation.router import Router
 from edge.navigation.arrival_detector import ArrivalDetector
+from edge.api.state import NavigationState
+from edge.api.navigation import router as nav_router
 
 if TYPE_CHECKING:
     from edge.inference.scheduler import InferenceScheduler
@@ -53,7 +55,6 @@ class ConnectionManager:
         logger.debug("WS client connected (total=%d)", len(self._clients))
 
     def disconnect(self, ws: WebSocket):
-        self._clients.discard(ws) if hasattr(self._clients, "discard") else None
         if ws in self._clients:
             self._clients.remove(ws)
         logger.debug("WS client disconnected (total=%d)", len(self._clients))
@@ -73,37 +74,6 @@ class ConnectionManager:
     @property
     def client_count(self) -> int:
         return len(self._clients)
-
-
-# ---------------------------------------------------------------------------
-# Shared navigation state (module-level singleton, set by create_app)
-# ---------------------------------------------------------------------------
-
-class NavigationState:
-    """
-    Holds all shared state for the navigation subsystem.
-    Injected into FastAPI request handlers via app.state.
-    """
-
-    def __init__(
-        self,
-        scheduler: "InferenceScheduler",
-        geocoder: Geocoder,
-        router: Router,
-        arrival_detector: ArrivalDetector,
-        ws_manager: ConnectionManager,
-    ):
-        self.scheduler = scheduler
-        self.geocoder = geocoder
-        self.router = router
-        self.arrival_detector = arrival_detector
-        self.ws_manager = ws_manager
-
-        # Navigation session state
-        self.is_navigating: bool = False
-        self.destination: dict | None = None        # {lat, lon, display_name}
-        self.current_pos: dict | None = None         # {lat, lon}
-        self.current_route: dict | None = None       # route payload for status
 
 
 # ---------------------------------------------------------------------------
@@ -168,7 +138,6 @@ def create_app(
     app.state.nav = nav_state
 
     # Mount navigation routes
-    from edge.api.navigation import router as nav_router
     app.include_router(nav_router)
 
     # WebSocket endpoint
