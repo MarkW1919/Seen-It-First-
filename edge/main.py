@@ -170,6 +170,7 @@ class EdgeService:
         # Scheduler
         sched_config = self.config.get("scheduling", {})
         self.scheduler = InferenceScheduler(sched_config)
+        self.scheduler.set_camera_manager(self.camera_manager)
         self.scheduler.set_models(
             vehicle_detector=vehicle_det,
             plate_detector=plate_det,

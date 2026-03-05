@@ -1,19 +1,22 @@
 """
-Camera capture module using GStreamer with NVDEC hardware acceleration.
+Camera capture module using GStreamer with Jetson hardware acceleration.
 
-Handles RTSP and CSI camera ingestion at 30 FPS with bounded frame queues.
-Drops oldest frames on overflow to never block the ingest pipeline.
+Handles CSI camera ingestion (nvarguscamerasrc / NVMM) and optional RTSP
+fallback at 30 FPS with bounded frame queues.  Drops oldest frames on
+overflow so the ingest thread never blocks the inference pipeline.
 """
 
 import logging
+import queue
 import threading
 import time
-from collections import deque
 from dataclasses import dataclass, field
 from typing import Optional
 
 import cv2
 import numpy as np
+
+from edge.camera.pipeline_builder import build_csi_pipeline, build_rtsp_pipeline
 
 logger = logging.getLogger(__name__)
 
@@ -23,8 +26,11 @@ class CameraConfig:
     """Configuration for a single camera."""
     camera_id: str
     name: str
-    uri: str
-    camera_type: str = "rtsp"  # rtsp | csi
+    camera_type: str = "csi"        # csi | rtsp
+    sensor_id: int = 0              # CSI port (nvarguscamerasrc sensor-id)
+    uri: str = ""                   # RTSP URI (rtsp:// …) — unused for CSI
+    role: str = ""                  # lpr | wide
+    housing: str = ""               # front | rear
     enabled: bool = True
     width: int = 1920
     height: int = 1080
@@ -44,79 +50,60 @@ class FramePacket:
 
 class CameraCapture:
     """
-    Single camera capture thread using GStreamer NVDEC pipeline.
+    Single camera capture thread using GStreamer NVMM pipeline.
 
-    Maintains a bounded deque of frames. When the queue is full,
-    the oldest frame is silently dropped. The ingest thread never blocks.
+    Maintains a bounded queue of frames (queue.Queue, maxsize=5).
+    When the queue is full, the oldest frame is discarded before the
+    new one is inserted so the ingest thread never blocks.
+
+    Public API::
+
+        capture.start()       → bool
+        capture.stop()
+        capture.read_frame()  → FramePacket | None  (alias: get_frame)
+        capture.reconnect()   → bool
     """
 
-    def __init__(self, config: CameraConfig, queue_size: int = 8):
+    _RECONNECT_DELAY_S = 2.0      # wait between reconnect attempts
+    _MAX_READ_FAILURES = 10       # consecutive failures before reconnecting
+
+    def __init__(self, config: CameraConfig, queue_size: int = 5):
         self.config = config
-        self.queue_size = queue_size
-        self._frame_queue: deque[FramePacket] = deque(maxlen=queue_size)
+        self._frame_queue: queue.Queue[FramePacket] = queue.Queue(maxsize=queue_size)
         self._lock = threading.Lock()
         self._capture: Optional[cv2.VideoCapture] = None
         self._thread: Optional[threading.Thread] = None
         self._running = False
         self._frame_count = 0
         self._dropped_frames = 0
+        self._reconnect_count = 0
+        self._last_frame_time = 0.0
         self._last_fps_time = 0.0
         self._fps_frame_count = 0
         self._measured_fps = 0.0
 
-    def _build_gstreamer_pipeline(self) -> str:
-        """Build GStreamer pipeline string for hardware-accelerated decode."""
+    # ------------------------------------------------------------------
+    # Pipeline
+    # ------------------------------------------------------------------
+
+    def _build_pipeline(self) -> str:
         cfg = self.config
-
         if cfg.camera_type == "csi":
-            # CSI camera via nvarguscamerasrc
-            pipeline = (
-                f"nvarguscamerasrc sensor-id=0 ! "
-                f"video/x-raw(memory:NVMM),width={cfg.width},"
-                f"height={cfg.height},framerate={cfg.fps}/1,format=NV12 ! "
-                f"nvvidconv ! video/x-raw,format=BGRx ! "
-                f"videoconvert ! video/x-raw,format=BGR ! appsink drop=1"
-            )
-        else:
-            # RTSP via rtspsrc + NVDEC hardware decoder
-            pipeline = (
-                f"rtspsrc location={cfg.uri} latency=100 ! "
-                f"rtph264depay ! h264parse ! nvv4l2decoder ! "
-                f"nvvidconv ! video/x-raw,format=BGRx ! "
-                f"videoconvert ! video/x-raw,format=BGR ! appsink drop=1"
-            )
+            return build_csi_pipeline(cfg.sensor_id, cfg.width, cfg.height, cfg.fps)
+        return build_rtsp_pipeline(cfg.uri)
 
-        return pipeline
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
 
     def start(self) -> bool:
-        """Start the capture thread."""
+        """Open the GStreamer pipeline and start the capture thread."""
         if self._running:
             logger.warning("Camera %s already running", self.config.camera_id)
             return False
 
-        pipeline = self._build_gstreamer_pipeline()
-        logger.info(
-            "Starting camera %s (%s): %s",
-            self.config.camera_id, self.config.name, self.config.uri,
-        )
-        logger.debug("GStreamer pipeline: %s", pipeline)
-
-        try:
-            self._capture = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
-        except Exception:
-            logger.exception("Failed to create VideoCapture for %s", self.config.camera_id)
+        if not self._open_capture():
             return False
-
-        if not self._capture.isOpened():
-            # Fallback: try direct RTSP via FFmpeg backend
-            logger.warning(
-                "GStreamer pipeline failed for %s, falling back to FFmpeg",
-                self.config.camera_id,
-            )
-            self._capture = cv2.VideoCapture(self.config.uri, cv2.CAP_FFMPEG)
-            if not self._capture.isOpened():
-                logger.error("Cannot open camera %s", self.config.camera_id)
-                return False
 
         self._running = True
         self._frame_count = 0
@@ -134,37 +121,166 @@ class CameraCapture:
         return True
 
     def stop(self):
-        """Stop the capture thread and release resources."""
+        """Signal the capture thread to exit and release resources."""
         self._running = False
         if self._thread is not None:
             self._thread.join(timeout=5.0)
             self._thread = None
+        self._release_capture()
+        # Drain the queue
+        while not self._frame_queue.empty():
+            try:
+                self._frame_queue.get_nowait()
+            except queue.Empty:
+                break
+        logger.info(
+            "Camera %s stopped. Captured: %d, Dropped: %d, Reconnects: %d",
+            self.config.camera_id,
+            self._frame_count,
+            self._dropped_frames,
+            self._reconnect_count,
+        )
+
+    def reconnect(self) -> bool:
+        """
+        Close the current pipeline and reopen it.
+
+        Called automatically by the capture loop after repeated read failures.
+        Can also be called externally (e.g. watchdog thread).
+
+        Returns:
+            True if the new pipeline opened successfully.
+        """
+        logger.warning(
+            "Camera %s reconnecting (attempt %d)…",
+            self.config.camera_id,
+            self._reconnect_count + 1,
+        )
+        self._release_capture()
+        time.sleep(self._RECONNECT_DELAY_S)
+
+        success = self._open_capture()
+        if success:
+            self._reconnect_count += 1
+            logger.info(
+                "Camera %s reconnected (total reconnects: %d)",
+                self.config.camera_id,
+                self._reconnect_count,
+            )
+        else:
+            logger.error("Camera %s reconnect failed", self.config.camera_id)
+        return success
+
+    # ------------------------------------------------------------------
+    # Frame retrieval
+    # ------------------------------------------------------------------
+
+    def read_frame(self) -> Optional[FramePacket]:
+        """
+        Return the most recent frame from the queue, or None if empty.
+
+        Equivalent to get_frame(); provided so call-sites can use either name.
+        """
+        try:
+            return self._frame_queue.get_nowait()
+        except queue.Empty:
+            return None
+
+    def get_frame(self) -> Optional[FramePacket]:
+        """Alias for read_frame()."""
+        return self.read_frame()
+
+    def get_all_frames(self) -> list[FramePacket]:
+        """Drain all queued frames and return them oldest-first."""
+        frames: list[FramePacket] = []
+        while True:
+            try:
+                frames.append(self._frame_queue.get_nowait())
+            except queue.Empty:
+                break
+        return frames
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _open_capture(self) -> bool:
+        """Open cv2.VideoCapture via GStreamer pipeline."""
+        pipeline = self._build_pipeline()
+        logger.info(
+            "Opening camera %s (%s) — sensor_id=%d",
+            self.config.camera_id,
+            self.config.name,
+            self.config.sensor_id,
+        )
+        logger.debug("GStreamer pipeline: %s", pipeline)
+
+        try:
+            cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
+        except Exception:
+            logger.exception(
+                "VideoCapture constructor failed for %s", self.config.camera_id
+            )
+            return False
+
+        if not cap.isOpened():
+            logger.error(
+                "GStreamer pipeline failed to open for %s", self.config.camera_id
+            )
+            cap.release()
+            return False
+
+        self._capture = cap
+        return True
+
+    def _release_capture(self):
         if self._capture is not None:
             self._capture.release()
             self._capture = None
-        with self._lock:
-            self._frame_queue.clear()
-        logger.info(
-            "Camera %s stopped. Captured: %d, Dropped: %d",
-            self.config.camera_id, self._frame_count, self._dropped_frames,
-        )
+
+    def _enqueue(self, packet: FramePacket):
+        """Insert packet; drop oldest if queue is full."""
+        if self._frame_queue.full():
+            try:
+                self._frame_queue.get_nowait()   # discard oldest
+                self._dropped_frames += 1
+            except queue.Empty:
+                pass
+        self._frame_queue.put_nowait(packet)
 
     def _capture_loop(self):
-        """Main capture loop running in a dedicated thread."""
+        """Main loop running in a dedicated daemon thread."""
+        consecutive_failures = 0
+
         while self._running:
             if self._capture is None or not self._capture.isOpened():
-                logger.error("Camera %s lost connection", self.config.camera_id)
-                self._running = False
-                break
+                if not self.reconnect():
+                    time.sleep(self._RECONNECT_DELAY_S)
+                    continue
+                consecutive_failures = 0
 
             ret, frame = self._capture.read()
+
             if not ret:
-                logger.warning("Frame read failed for %s", self.config.camera_id)
-                time.sleep(0.01)
+                consecutive_failures += 1
+                logger.warning(
+                    "Camera %s: read failure %d/%d",
+                    self.config.camera_id,
+                    consecutive_failures,
+                    self._MAX_READ_FAILURES,
+                )
+                if consecutive_failures >= self._MAX_READ_FAILURES:
+                    if not self.reconnect():
+                        time.sleep(self._RECONNECT_DELAY_S)
+                    consecutive_failures = 0
+                else:
+                    time.sleep(0.01)
                 continue
 
+            consecutive_failures = 0
             self._frame_count += 1
             now = time.monotonic()
+            self._last_frame_time = now
 
             packet = FramePacket(
                 camera_id=self.config.camera_id,
@@ -174,14 +290,9 @@ class CameraCapture:
                 width=frame.shape[1],
                 height=frame.shape[0],
             )
+            self._enqueue(packet)
 
-            with self._lock:
-                if len(self._frame_queue) == self.queue_size:
-                    self._dropped_frames += 1
-                # deque with maxlen automatically drops oldest
-                self._frame_queue.append(packet)
-
-            # FPS measurement every 2 seconds
+            # FPS measurement — update every 2 seconds
             self._fps_frame_count += 1
             elapsed = now - self._last_fps_time
             if elapsed >= 2.0:
@@ -189,19 +300,9 @@ class CameraCapture:
                 self._fps_frame_count = 0
                 self._last_fps_time = now
 
-    def get_frame(self) -> Optional[FramePacket]:
-        """Get the most recent frame, or None if queue is empty."""
-        with self._lock:
-            if self._frame_queue:
-                return self._frame_queue.pop()
-            return None
-
-    def get_all_frames(self) -> list[FramePacket]:
-        """Drain all queued frames (oldest first)."""
-        with self._lock:
-            frames = list(self._frame_queue)
-            self._frame_queue.clear()
-            return frames
+    # ------------------------------------------------------------------
+    # Properties
+    # ------------------------------------------------------------------
 
     @property
     def is_running(self) -> bool:
@@ -218,6 +319,49 @@ class CameraCapture:
             "running": self._running,
             "frames_captured": self._frame_count,
             "frames_dropped": self._dropped_frames,
+            "reconnect_count": self._reconnect_count,
             "measured_fps": round(self._measured_fps, 1),
-            "queue_depth": len(self._frame_queue),
+            "last_frame_time": self._last_frame_time,
+            "queue_depth": self._frame_queue.qsize(),
         }
+
+
+# ---------------------------------------------------------------------------
+# Quick smoke-test: python -m edge.camera.capture
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    import sys
+    import signal
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
+
+    from edge.camera.manager import CameraManager
+
+    config_path = sys.argv[1] if len(sys.argv) > 1 else "edge/camera/config.yaml"
+    manager = CameraManager(config_path)
+    manager.start_all()
+
+    stop = threading.Event()
+    signal.signal(signal.SIGINT, lambda *_: stop.set())
+    signal.signal(signal.SIGTERM, lambda *_: stop.set())
+
+    print(f"\nMonitoring {len(manager.cameras)} cameras (Ctrl-C to stop)…\n")
+    try:
+        while not stop.is_set():
+            time.sleep(2.0)
+            for cam_id, cap in manager.cameras.items():
+                s = cap.stats
+                print(
+                    f"  {cam_id}: {s['measured_fps']:.1f} FPS  "
+                    f"captured={s['frames_captured']}  "
+                    f"dropped={s['frames_dropped']}  "
+                    f"reconnects={s['reconnect_count']}  "
+                    f"running={s['running']}"
+                )
+            print()
+    finally:
+        manager.stop_all()
