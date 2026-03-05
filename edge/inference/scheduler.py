@@ -7,6 +7,10 @@ Enforces:
 - OCR only when plate confidence > threshold
 - Classifier once per confirmed track
 - Bounded queues, drop oldest on overflow
+
+The actual stage execution is delegated to InferencePipeline.  The scheduler
+is responsible only for rate limiting, night mode detection, and active/idle
+mode switching (navigation-triggered scanning suppression).
 """
 
 import logging
@@ -25,6 +29,9 @@ from edge.inference.tracker import Tracker, Track
 
 if TYPE_CHECKING:
     from edge.camera.manager import CameraManager
+    from edge.inference.pipeline import InferencePipeline
+    from edge.inference.fusion import DetectionFusionEngine
+    from edge.inference.events import EventPublisher
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +55,12 @@ class InferenceScheduler:
     """
     Orchestrates the inference pipeline with frame-rate control.
 
-    Controls the cadence of each inference stage to stay within
-    GPU budget. Supports dynamic FPS adjustment for thermal throttling.
+    Controls the cadence of each inference stage to stay within GPU budget.
+    Supports dynamic FPS adjustment for thermal throttling and active/idle
+    mode switching for navigation-triggered scanning suppression.
+
+    Stage execution is fully delegated to InferencePipeline (set via
+    set_models()).  This class handles only scheduling concerns.
     """
 
     def __init__(self, config: dict):
@@ -63,13 +74,15 @@ class InferenceScheduler:
         self._night_mode: dict[str, bool] = {}
         self._brightness_threshold = 60
 
-        # Pipeline components (set via set_models)
+        # Model references kept for backward compat (thermal management,
+        # shutdown, and external callers that access scheduler.classifier etc.)
         self.vehicle_detector: VehicleDetector | None = None
         self.plate_detector: PlateDetector | None = None
         self.ocr: PlateOCR | None = None
         self.classifier: VehicleClassifier | None = None
-        self.trackers: dict[str, Tracker] = {}
-        self._tracker_config: dict = {}
+
+        # InferencePipeline — created by set_models()
+        self.pipeline: "InferencePipeline | None" = None
 
         # Pipeline active flag.
         # False = IDLE (navigation en-route mode, no scanning).
@@ -83,6 +96,10 @@ class InferenceScheduler:
         self._frames_processed = 0
         self._frames_skipped = 0
 
+    # ------------------------------------------------------------------
+    # Wiring
+    # ------------------------------------------------------------------
+
     def set_camera_manager(self, manager: "CameraManager"):
         """Attach the CameraManager so the scheduler can pull frames directly."""
         self.camera_manager = manager
@@ -94,19 +111,57 @@ class InferenceScheduler:
         ocr: PlateOCR,
         classifier: VehicleClassifier,
         tracker_config: dict,
+        fusion_engine: "DetectionFusionEngine | None" = None,
+        event_publisher: "EventPublisher | None" = None,
     ):
-        """Attach loaded models to the scheduler."""
+        """
+        Attach loaded models and create the InferencePipeline.
+
+        Args:
+            vehicle_detector: Loaded YOLOv8n TRT engine.
+            plate_detector:   Loaded YOLOv8s plate TRT engine.
+            ocr:              Loaded PP-OCRv4 TRT engine.
+            classifier:       Loaded YOLOv8n-cls TRT engine.
+            tracker_config:   DeepSORT config dict.
+            fusion_engine:    DetectionFusionEngine for multi-frame confirmation.
+            event_publisher:  EventPublisher for WebSocket broadcasting.
+        """
+        from edge.inference.pipeline import InferencePipeline
+
         self.vehicle_detector = vehicle_detector
         self.plate_detector = plate_detector
         self.ocr = ocr
         self.classifier = classifier
-        self._tracker_config = tracker_config
 
-    def _get_tracker(self, camera_id: str) -> Tracker:
-        """Get or create a per-camera tracker."""
-        if camera_id not in self.trackers:
-            self.trackers[camera_id] = Tracker(self._tracker_config)
-        return self.trackers[camera_id]
+        # Create no-op stubs if not provided (e.g. unit tests)
+        if fusion_engine is None:
+            fusion_engine = _NoOpFusionEngine()
+        if event_publisher is None:
+            event_publisher = _NoOpEventPublisher()
+
+        self.pipeline = InferencePipeline(
+            vehicle_detector=vehicle_detector,
+            plate_detector=plate_detector,
+            ocr=ocr,
+            classifier=classifier,
+            tracker_config=tracker_config,
+            fusion_engine=fusion_engine,
+            event_publisher=event_publisher,
+        )
+
+    # ------------------------------------------------------------------
+    # Tracker access (backward compat — tracker state lives in pipeline)
+    # ------------------------------------------------------------------
+
+    @property
+    def trackers(self) -> dict[str, Tracker]:
+        if self.pipeline is not None:
+            return self.pipeline.trackers
+        return {}
+
+    # ------------------------------------------------------------------
+    # Active / idle mode
+    # ------------------------------------------------------------------
 
     def activate(self):
         """Switch pipeline to ACTIVE (normal scanning). Called on arrival."""
@@ -124,16 +179,23 @@ class InferenceScheduler:
     def is_active(self) -> bool:
         return self._active
 
+    # ------------------------------------------------------------------
+    # Frame processing
+    # ------------------------------------------------------------------
+
     def process_frame(self, packet: FramePacket) -> PipelineResult | None:
         """
-        Process a single frame through the full inference pipeline.
+        Apply rate limiting and night-mode detection, then run the pipeline.
 
         Returns None if:
         - Pipeline is IDLE (navigation mode, en route)
         - Frame is skipped due to FPS rate limiting
+        - No InferencePipeline has been initialised (set_models not called)
         """
-        # IDLE mode: navigation is active, not yet at destination
         if not self._active:
+            return None
+
+        if self.pipeline is None:
             return None
 
         now = time.monotonic()
@@ -146,70 +208,23 @@ class InferenceScheduler:
             return None
 
         self._last_det_time[cam_id] = now
-        t_start = now
 
-        result = PipelineResult(
-            camera_id=cam_id,
-            timestamp=packet.timestamp,
-            frame_number=packet.frame_number,
-        )
+        night_mode = self._check_night_mode(cam_id, packet.frame)
 
-        frame = packet.frame
+        result = self.pipeline.process_frame(packet, night_mode=night_mode)
 
-        # Check night mode via histogram brightness
-        result.night_mode = self._check_night_mode(cam_id, frame)
-
-        # Stage 1: Vehicle detection (full frame)
-        if self.vehicle_detector is not None and self.vehicle_detector.is_loaded:
-            result.vehicles = self.vehicle_detector.detect(frame)
-
-        # Stage 2: Plate detection (vehicle crops only)
-        if self.plate_detector is not None and self.plate_detector.is_loaded and result.vehicles:
-            result.plates = self.plate_detector.detect(frame, result.vehicles)
-
-        # Stage 3: OCR (plates above confidence threshold only)
-        if self.ocr is not None and self.ocr.is_loaded and result.plates:
-            result.ocr_results = self.ocr.recognize(
-                frame, result.plates, night_mode=result.night_mode
-            )
-
-        # Stage 4: Tracking
-        tracker = self._get_tracker(cam_id)
-        if result.vehicles:
-            det_arrays = [
-                np.array([v.x1, v.y1, v.x2, v.y2, v.confidence])
-                for v in result.vehicles
-            ]
-            result.tracks = tracker.update(det_arrays)
-        else:
-            result.tracks = tracker.update([])
-
-        # Stage 5: Associate OCR results with tracks
-        self._associate_plates_to_tracks(result)
-
-        # Stage 6: Classifier (once per confirmed, unclassified track)
-        if self.classifier is not None and self.classifier.is_loaded and not self.classifier.is_suspended:
-            for track in result.tracks:
-                if track.confirmed and not track.classified:
-                    crop = self._crop_track(frame, track)
-                    if crop is not None:
-                        classification = self.classifier.classify(crop)
-                        if classification is not None:
-                            result.classifications[track.track_id] = classification
-                            track.classified = True
-
-        result.processing_time_ms = (time.monotonic() - t_start) * 1000
         self._frames_processed += 1
-
         return result
 
+    # ------------------------------------------------------------------
+    # Night mode
+    # ------------------------------------------------------------------
+
     def _check_night_mode(self, camera_id: str, frame: np.ndarray) -> bool:
-        """Determine night mode via histogram brightness threshold."""
-        # Sample center region for efficiency
+        """Determine night mode via histogram brightness of the centre region."""
         h, w = frame.shape[:2]
         sample = frame[h // 4 : 3 * h // 4, w // 4 : 3 * w // 4]
         gray = np.mean(sample)
-
         is_night = gray < self._brightness_threshold
         prev = self._night_mode.get(camera_id)
         if prev != is_night:
@@ -220,53 +235,9 @@ class InferenceScheduler:
         self._night_mode[camera_id] = is_night
         return is_night
 
-    def _associate_plates_to_tracks(self, result: PipelineResult):
-        """Match OCR results to the closest track by IoU."""
-        for ocr_result in result.ocr_results:
-            plate = ocr_result.plate_detection
-            vehicle = plate.vehicle_box
-            vbox = np.array([vehicle.x1, vehicle.y1, vehicle.x2, vehicle.y2])
-
-            best_track = None
-            best_iou = 0.0
-
-            for track in result.tracks:
-                iou = self._iou(vbox, track.bbox)
-                if iou > best_iou:
-                    best_iou = iou
-                    best_track = track
-
-            if best_track is not None and best_iou > 0.3:
-                # Update track with better-confidence plate
-                if ocr_result.confidence > best_track.plate_confidence:
-                    best_track.plate_text = ocr_result.text
-                    best_track.plate_confidence = ocr_result.confidence
-
-    @staticmethod
-    def _crop_track(frame: np.ndarray, track: Track) -> np.ndarray | None:
-        """Crop tracked vehicle region from frame."""
-        h, w = frame.shape[:2]
-        x1 = max(0, int(track.bbox[0]))
-        y1 = max(0, int(track.bbox[1]))
-        x2 = min(w, int(track.bbox[2]))
-        y2 = min(h, int(track.bbox[3]))
-        crop = frame[y1:y2, x1:x2]
-        if crop.size == 0:
-            return None
-        return crop
-
-    @staticmethod
-    def _iou(box_a: np.ndarray, box_b: np.ndarray) -> float:
-        """Compute IoU between two boxes."""
-        x1 = max(box_a[0], box_b[0])
-        y1 = max(box_a[1], box_b[1])
-        x2 = min(box_a[2], box_b[2])
-        y2 = min(box_a[3], box_b[3])
-        inter = max(0, x2 - x1) * max(0, y2 - y1)
-        area_a = (box_a[2] - box_a[0]) * (box_a[3] - box_a[1])
-        area_b = (box_b[2] - box_b[0]) * (box_b[3] - box_b[1])
-        union = area_a + area_b - inter
-        return inter / (union + 1e-6)
+    # ------------------------------------------------------------------
+    # FPS control (thermal throttling)
+    # ------------------------------------------------------------------
 
     def set_detection_fps(self, fps: int):
         """Dynamically adjust detection FPS (for thermal throttling)."""
@@ -275,12 +246,33 @@ class InferenceScheduler:
             self._current_det_fps = fps
             self._min_frame_interval = 1.0 / fps
 
+    # ------------------------------------------------------------------
+    # Stats
+    # ------------------------------------------------------------------
+
     @property
     def stats(self) -> dict:
         return {
-            "current_det_fps": self._current_det_fps,
+            "current_det_fps":  self._current_det_fps,
             "frames_processed": self._frames_processed,
-            "frames_skipped": self._frames_skipped,
-            "active_trackers": len(self.trackers),
-            "pipeline_active": self._active,
+            "frames_skipped":   self._frames_skipped,
+            "active_trackers":  len(self.trackers),
+            "pipeline_active":  self._active,
         }
+
+
+# ---------------------------------------------------------------------------
+# No-op stubs used when fusion / publisher are not provided
+# ---------------------------------------------------------------------------
+
+class _NoOpFusionEngine:
+    def add_detection(self, detection):
+        pass
+
+
+class _NoOpEventPublisher:
+    def publish_detection(self, data): pass
+    def publish_alert(self, data): pass
+    def publish_system_event(self, event_type, data): pass
+    def set_event_loop(self, loop): pass
+    def set_ws_manager(self, ws_manager): pass

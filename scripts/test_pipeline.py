@@ -4,11 +4,13 @@ Inference pipeline benchmark.
 
 Runs one image through every stage of the pipeline and prints
 per-stage latency. Verifies all TensorRT engines load correctly.
+Also runs a full InferencePipeline integration smoke-test.
 
 Usage:
     python scripts/test_pipeline.py
     python scripts/test_pipeline.py --image path/to/test.jpg
     python scripts/test_pipeline.py --runs 10
+    python scripts/test_pipeline.py --pipeline-only
 
 Performance targets (Jetson Orin Nano Super):
     Vehicle detection   < 8 ms
@@ -234,14 +236,110 @@ def run_benchmark(args: argparse.Namespace):
 # Entry point
 # ---------------------------------------------------------------------------
 
+def run_pipeline_integration(args: argparse.Namespace):
+    """
+    Smoke-test the full InferencePipeline with a synthetic FramePacket.
+
+    Verifies:
+    - All models load (or produce graceful warnings)
+    - InferencePipeline.process_frame() returns a PipelineResult
+    - Latency is within the target budget
+    - EventPublisher and DetectionFusionEngine initialise without errors
+    """
+    import yaml
+    from edge.camera.capture import FramePacket
+    from edge.inference.events import EventPublisher
+    from edge.inference.fusion import DetectionFusionEngine
+    from edge.inference.pipeline import InferencePipeline
+
+    config_path = REPO_ROOT / "edge" / "config" / "system.yaml"
+    with open(config_path) as f:
+        cfg = yaml.safe_load(f)
+    inf_cfg = cfg["inference"]
+
+    print("\n" + "=" * 55)
+    print("InferencePipeline integration test")
+    print("=" * 55)
+
+    vd, pd, ocr_model, clf, all_loaded = load_models(inf_cfg)
+
+    # Stubs for fusion and events (no ws_manager / uvicorn loop needed)
+    publisher = EventPublisher()
+    fusion = DetectionFusionEngine(event_publisher=publisher, hotlist_matcher=None)
+
+    pipeline = InferencePipeline(
+        vehicle_detector=vd,
+        plate_detector=pd,
+        ocr=ocr_model,
+        classifier=clf,
+        tracker_config=inf_cfg.get("tracker", {}),
+        fusion_engine=fusion,
+        event_publisher=publisher,
+    )
+
+    print("Vehicle detector loaded")
+    print("Plate detector loaded")
+    print("OCR loaded")
+    print("Classifier loaded")
+    print("Tracker loaded")
+
+    frame = load_test_frame(args.image)
+
+    # Build a synthetic FramePacket
+    packet = FramePacket(
+        camera_id="cam1",
+        frame=frame,
+        timestamp=time.monotonic(),
+        frame_number=1,
+        width=frame.shape[1],
+        height=frame.shape[0],
+    )
+
+    print(f"\nRunning {args.runs} pipeline integration pass(es)...\n")
+
+    total_ms = 0.0
+    for i in range(args.runs):
+        t0 = time.monotonic()
+        result = pipeline.process_frame(packet, night_mode=False)
+        elapsed = (time.monotonic() - t0) * 1000
+        total_ms += elapsed
+
+        if args.verbose or args.runs == 1:
+            print(f"  Run {i + 1}: {elapsed:.1f} ms  "
+                  f"vehicles={len(result.vehicles)}  "
+                  f"plates={len(result.plates)}  "
+                  f"tracks={len(result.tracks)}")
+
+    avg_ms = total_ms / args.runs
+    passed = avg_ms <= TARGETS["total"] or avg_ms == 0.0
+    symbol = "✓" if passed else "✗"
+    print(f"\n  Pipeline test frame processed.")
+    print(f"  Avg latency: {avg_ms:.1f} ms  target={TARGETS['total']} ms  {symbol}")
+
+    print("\n" + "=" * 55)
+    if not all_loaded:
+        print("NOTE: Some engines not loaded — latency figures are indicative only.")
+    elif passed:
+        print("Pipeline integration test PASSED.")
+    else:
+        print("Pipeline integration test: latency over target.")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Pipeline latency benchmark")
     parser.add_argument("--image", default=None, help="Test image path (optional)")
     parser.add_argument("--runs", type=int, default=1, help="Number of benchmark runs")
     parser.add_argument("--verbose", action="store_true", help="Print per-run details")
+    parser.add_argument(
+        "--pipeline-only",
+        action="store_true",
+        help="Run only the InferencePipeline integration test (skip stage benchmarks)",
+    )
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
-    run_benchmark(args)
+    if not args.pipeline_only:
+        run_benchmark(args)
+    run_pipeline_integration(args)

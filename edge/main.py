@@ -28,6 +28,8 @@ from edge.inference.plate_detector import PlateDetector
 from edge.inference.ocr import PlateOCR
 from edge.inference.classifier import VehicleClassifier
 from edge.inference.scheduler import InferenceScheduler
+from edge.inference.events import EventPublisher
+from edge.inference.fusion import DetectionFusionEngine
 from edge.hotlist.loader import HotlistLoader
 from edge.hotlist.matcher import HotlistMatcher
 from edge.storage.database import Database
@@ -108,6 +110,8 @@ class EdgeService:
         self.scheduler: InferenceScheduler | None = None
         self.hotlist_loader: HotlistLoader | None = None
         self.hotlist_matcher: HotlistMatcher | None = None
+        self.event_publisher: EventPublisher | None = None
+        self.fusion_engine: DetectionFusionEngine | None = None
         self.db: Database | None = None
         self.repo: DetectionRepository | None = None
         self.thermal: ThermalMonitor | None = None
@@ -167,6 +171,25 @@ class EdgeService:
                 "Some models failed to load. Pipeline will run with available models."
             )
 
+        # Hotlist (created before scheduler so fusion can use it)
+        hotlist_config = self.config.get("hotlist", {})
+        hotlist_path = str(BASE_DIR / hotlist_config.get("file_path", "data/hotlist.csv"))
+        self.hotlist_loader = HotlistLoader(hotlist_path)
+        self.hotlist_loader.load()  # non-fatal if file missing
+        self.hotlist_matcher = HotlistMatcher(
+            self.hotlist_loader,
+            cooldown_sec=hotlist_config.get("cooldown_sec", 60),
+        )
+
+        # Event publisher (ws_manager set later in _start_api_server)
+        self.event_publisher = EventPublisher()
+
+        # Detection fusion engine
+        self.fusion_engine = DetectionFusionEngine(
+            event_publisher=self.event_publisher,
+            hotlist_matcher=self.hotlist_matcher,
+        )
+
         # Scheduler
         sched_config = self.config.get("scheduling", {})
         self.scheduler = InferenceScheduler(sched_config)
@@ -177,22 +200,15 @@ class EdgeService:
             ocr=ocr,
             classifier=classifier,
             tracker_config=inf_config.get("tracker", {}),
-        )
-
-        # Hotlist
-        hotlist_config = self.config.get("hotlist", {})
-        hotlist_path = str(BASE_DIR / hotlist_config.get("file_path", "data/hotlist.csv"))
-        self.hotlist_loader = HotlistLoader(hotlist_path)
-        self.hotlist_loader.load()  # non-fatal if file missing
-        self.hotlist_matcher = HotlistMatcher(
-            self.hotlist_loader,
-            cooldown_sec=hotlist_config.get("cooldown_sec", 60),
+            fusion_engine=self.fusion_engine,
+            event_publisher=self.event_publisher,
         )
 
         # Alert manager
         self.alert_manager = AlertManager(hotlist_config)
 
         # Navigation API server (FastAPI + uvicorn, daemon thread)
+        # Also wires ws_manager into event_publisher
         self._start_api_server()
 
         logger.info("Initialization complete")
@@ -200,11 +216,22 @@ class EdgeService:
 
     def _start_api_server(self):
         """Start the FastAPI navigation server in a daemon thread."""
-        from edge.api.app import create_app
+        from edge.api.app import create_app, ConnectionManager
         nav_cfg = self.config.get("navigation", {})
         api_cfg = self.config.get("api", {})
 
-        api_app = create_app(scheduler=self.scheduler, config=nav_cfg)
+        # Create shared ConnectionManager so event_publisher can broadcast
+        # to WebSocket clients from the inference thread.
+        ws_manager = ConnectionManager()
+        if self.event_publisher is not None:
+            self.event_publisher.set_ws_manager(ws_manager)
+
+        api_app = create_app(
+            scheduler=self.scheduler,
+            config=nav_cfg,
+            ws_manager=ws_manager,
+            event_publisher=self.event_publisher,
+        )
 
         host = api_cfg.get("host", "0.0.0.0")
         port = api_cfg.get("port", 8080)
