@@ -67,6 +67,11 @@ class InferenceScheduler:
         self.trackers: dict[str, Tracker] = {}
         self._tracker_config: dict = {}
 
+        # Pipeline active flag.
+        # False = IDLE (navigation en-route mode, no scanning).
+        # True  = ACTIVE (default; scanning runs normally).
+        self._active: bool = True
+
         # Stats
         self._frames_processed = 0
         self._frames_skipped = 0
@@ -92,13 +97,34 @@ class InferenceScheduler:
             self.trackers[camera_id] = Tracker(self._tracker_config)
         return self.trackers[camera_id]
 
+    def activate(self):
+        """Switch pipeline to ACTIVE (normal scanning). Called on arrival."""
+        if not self._active:
+            logger.info("Pipeline ACTIVE — LPR scanning enabled")
+            self._active = True
+
+    def deactivate(self):
+        """Switch pipeline to IDLE (no scanning while en route)."""
+        if self._active:
+            logger.info("Pipeline IDLE — LPR scanning suspended (navigation mode)")
+            self._active = False
+
+    @property
+    def is_active(self) -> bool:
+        return self._active
+
     def process_frame(self, packet: FramePacket) -> PipelineResult | None:
         """
         Process a single frame through the full inference pipeline.
 
-        Rate-limits vehicle detection to current_det_fps.
-        Returns None if frame is skipped (rate limiting).
+        Returns None if:
+        - Pipeline is IDLE (navigation mode, en route)
+        - Frame is skipped due to FPS rate limiting
         """
+        # IDLE mode: navigation is active, not yet at destination
+        if not self._active:
+            return None
+
         now = time.monotonic()
         cam_id = packet.camera_id
 
@@ -245,4 +271,5 @@ class InferenceScheduler:
             "frames_processed": self._frames_processed,
             "frames_skipped": self._frames_skipped,
             "active_trackers": len(self.trackers),
+            "pipeline_active": self._active,
         }

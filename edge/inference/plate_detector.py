@@ -28,6 +28,12 @@ class PlateDetection:
     confidence: float
     vehicle_box: VehicleDetection  # parent vehicle
 
+    def to_dict(self) -> dict:
+        return {
+            "bbox": [self.x1, self.y1, self.x2, self.y2],
+            "confidence": round(self.confidence, 4),
+        }
+
 
 class PlateDetector:
     """

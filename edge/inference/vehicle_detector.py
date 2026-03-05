@@ -32,6 +32,13 @@ class VehicleDetection:
     class_id: int
     class_name: str
 
+    def to_dict(self) -> dict:
+        return {
+            "bbox": [self.x1, self.y1, self.x2, self.y2],
+            "confidence": round(self.confidence, 4),
+            "class": self.class_name,
+        }
+
 
 class VehicleDetector:
     """

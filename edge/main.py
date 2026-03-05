@@ -8,15 +8,18 @@ Single-process edge service that orchestrates:
 4. Local SQLite storage
 5. Console + audio alerts
 6. Thermal monitoring + adaptive throttling
+7. Navigation API server (FastAPI/uvicorn, port 8080)
 """
 
 import logging
 import os
 import signal
 import sys
+import threading
 import time
 from pathlib import Path
 
+import uvicorn
 import yaml
 
 from edge.camera.manager import CameraManager
@@ -188,8 +191,32 @@ class EdgeService:
         # Alert manager
         self.alert_manager = AlertManager(hotlist_config)
 
+        # Navigation API server (FastAPI + uvicorn, daemon thread)
+        self._start_api_server()
+
         logger.info("Initialization complete")
         return True
+
+    def _start_api_server(self):
+        """Start the FastAPI navigation server in a daemon thread."""
+        from edge.api.app import create_app
+        nav_cfg = self.config.get("navigation", {})
+        api_cfg = self.config.get("api", {})
+
+        api_app = create_app(scheduler=self.scheduler, config=nav_cfg)
+
+        host = api_cfg.get("host", "0.0.0.0")
+        port = api_cfg.get("port", 8080)
+
+        api_thread = threading.Thread(
+            target=uvicorn.run,
+            args=(api_app,),
+            kwargs={"host": host, "port": port, "log_level": "warning"},
+            daemon=True,
+            name="nav-api-server",
+        )
+        api_thread.start()
+        logger.info("Navigation API server started on %s:%d", host, port)
 
     def start(self):
         """Start cameras and begin processing."""
