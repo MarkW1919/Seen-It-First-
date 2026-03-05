@@ -8,7 +8,7 @@ Detect and read US license plates at night (80–100 ft range) using 2–4 camer
 No cloud. No Docker in production. Single-process edge service.
 
 **US plates only.** No EU/International plate support in Phase 1.
-Character set: A-Z 0-9. Validation regex: `^[A-Z0-9]{5,8}$`
+Character set: A-Z 0-9. Validation regex: `^[A-Z0-9]{2,8}$`
 
 ### Model Strategy (Phase 1)
 
@@ -23,7 +23,7 @@ creation is required for Phase 1 deployment.
 | EfficientNet-Lite0 (classifier) | Pretrained | Not required |
 
 Custom fine-tuning pipelines (nighttime datasets, model re-export) are
-deferred to **Phase 3**. See `ai/training_phase3/README.md`.
+deferred to **Phase 3**. See `edge/ai_training_phase3/README.md`.
 
 ### Capabilities
 
@@ -88,7 +88,7 @@ edge/
 
 models/              # TensorRT engine files (not in git)
 systemd/             # systemd service file
-ai/training_phase3/  # Phase 3 fine-tuning (not required for Phase 1)
+edge/ai_training_phase3/  # Phase 3 fine-tuning (not required for Phase 1)
 docs/                # Build rules and documentation
 ```
 
