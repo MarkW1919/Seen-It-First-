@@ -15,3 +15,8 @@ scipy>=1.10
 
 # Audio alerts (optional, system packages preferred)
 # sox / beep available via apt
+
+# Navigation API server
+fastapi>=0.111
+uvicorn[standard]>=0.29
+pydantic>=2.0

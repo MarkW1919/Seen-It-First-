@@ -114,3 +114,17 @@ storage:
   max_detections: 1000000
   vacuum_interval_hours: 24
   snapshot_dir: "data/snapshots"
+
+navigation:
+  # Arrival geofence radius — pipeline activates when vehicle is this close
+  arrival_radius_m: 80
+  # OpenStreetMap Nominatim geocoder (replace with self-hosted for production)
+  nominatim_url: "https://nominatim.openstreetmap.org"
+  # OSRM routing (replace with self-hosted for production)
+  osrm_url: "https://router.project-osrm.org"
+  # Local disk cache for geocode results
+  geocode_cache_path: "data/geocode_cache.json"
+
+api:
+  host: "0.0.0.0"
+  port: 8080
