@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from edge.navigation.geocoder import GeocoderError
 from edge.navigation.router import RouterError
-from edge.api.app import NavigationState
+from edge.api.state import NavigationState
 
 logger = logging.getLogger(__name__)
 
