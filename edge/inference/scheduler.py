@@ -12,6 +12,7 @@ Enforces:
 import logging
 import time
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -21,6 +22,9 @@ from edge.inference.plate_detector import PlateDetector, PlateDetection
 from edge.inference.ocr import PlateOCR, OCRResult
 from edge.inference.classifier import VehicleClassifier, VehicleClassification
 from edge.inference.tracker import Tracker, Track
+
+if TYPE_CHECKING:
+    from edge.camera.manager import CameraManager
 
 logger = logging.getLogger(__name__)
 
@@ -72,9 +76,16 @@ class InferenceScheduler:
         # True  = ACTIVE (default; scanning runs normally).
         self._active: bool = True
 
+        # Camera manager — set via set_camera_manager() after construction
+        self.camera_manager: "CameraManager | None" = None
+
         # Stats
         self._frames_processed = 0
         self._frames_skipped = 0
+
+    def set_camera_manager(self, manager: "CameraManager"):
+        """Attach the CameraManager so the scheduler can pull frames directly."""
+        self.camera_manager = manager
 
     def set_models(
         self,
