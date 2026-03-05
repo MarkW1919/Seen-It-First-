@@ -11,6 +11,14 @@ import type {
 } from "../types/navigation";
 
 // ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+const RADIUS_MIN_FT = 1;
+const RADIUS_MAX_FT = 1320;   // ¼ mile
+const RADIUS_DEFAULT_FT = 300;
+const GPS_POST_INTERVAL_MS = 2000;
+
+// ---------------------------------------------------------------------------
 // Leaflet icon helpers (fix default icon path in Vite)
 // ---------------------------------------------------------------------------
 const blueIcon = icon({
@@ -82,9 +90,13 @@ export default function NavigationPage() {
   const [geocoded, setGeocoded] = useState<GeocodeResponse | null>(null);
   const [route, setRoute] = useState<RouteResponse | null>(null);
 
-  // GPS from browser
+  // Arrival radius (feet) — displayed and sent to backend on start
+  const [arrivalRadiusFt, setArrivalRadiusFt] = useState(RADIUS_DEFAULT_FT);
+
+  // GPS from browser — map display uses state; GPS posts use a ref to avoid
+  // restarting the posting interval every time the position changes
   const [currentPos, setCurrentPos] = useState<[number, number] | null>(null);
-  const gpsWatchId = useRef<number | null>(null);
+  const currentPosRef = useRef<[number, number] | null>(null);
 
   // Navigation session state
   const [navigating, setNavigating] = useState(false);
@@ -119,29 +131,42 @@ export default function NavigationPage() {
   useWebSocket(handleWsEvent);
 
   // ------------------------------------------------------------------
-  // Browser Geolocation — watch position and POST to backend
+  // Browser Geolocation — watchPosition updates the map marker only.
+  // GPS position is also stored in a ref for the posting interval below.
   // ------------------------------------------------------------------
   useEffect(() => {
     if (!navigator.geolocation) return;
 
-    gpsWatchId.current = navigator.geolocation.watchPosition(
+    const id = navigator.geolocation.watchPosition(
       (pos) => {
-        const { latitude: lat, longitude: lon } = pos.coords;
-        setCurrentPos([lat, lon]);
-
-        // Always POST GPS; backend ignores it when navigation is inactive
-        post("/navigation/gps", { lat, lon }).catch(() => {/* ignore */});
+        const coords: [number, number] = [pos.coords.latitude, pos.coords.longitude];
+        setCurrentPos(coords);
+        currentPosRef.current = coords;
       },
       (err) => console.warn("Geolocation error:", err.message),
       { enableHighAccuracy: true, maximumAge: 5000 },
     );
 
-    return () => {
-      if (gpsWatchId.current !== null) {
-        navigator.geolocation.clearWatch(gpsWatchId.current);
-      }
-    };
+    return () => navigator.geolocation.clearWatch(id);
   }, []);
+
+  // ------------------------------------------------------------------
+  // GPS POST interval — sends position to backend every 2s.
+  // Only runs while navigating; cleared automatically when navigating
+  // becomes false (navigation stopped or ARRIVED received).
+  // ------------------------------------------------------------------
+  useEffect(() => {
+    if (!navigating) return;
+
+    const interval = setInterval(() => {
+      const pos = currentPosRef.current;
+      if (pos) {
+        post("/navigation/gps", { lat: pos[0], lon: pos[1] }).catch(() => {/* ignore */});
+      }
+    }, GPS_POST_INTERVAL_MS);
+
+    return () => clearInterval(interval);
+  }, [navigating]);
 
   // ------------------------------------------------------------------
   // Geocode mutation
@@ -182,7 +207,7 @@ export default function NavigationPage() {
   }, [geocoded, currentPos]);
 
   // ------------------------------------------------------------------
-  // Start navigation mutation
+  // Start navigation mutation — includes arrivalRadiusFt
   // ------------------------------------------------------------------
   const startMutation = useMutation<unknown, Error, void>({
     mutationFn: async () => {
@@ -191,6 +216,7 @@ export default function NavigationPage() {
         dest_lat: geocoded.lat,
         dest_lon: geocoded.lon,
         display_name: geocoded.display_name,
+        radius_ft: arrivalRadiusFt,
       });
     },
     onSuccess: () => {
@@ -285,6 +311,27 @@ export default function NavigationPage() {
                 </div>
               </div>
             )}
+          </section>
+
+          {/* Arrival radius slider */}
+          <section style={styles.card}>
+            <h2 style={styles.cardTitle}>Arrival Trigger Distance</h2>
+            <input
+              type="range"
+              min={RADIUS_MIN_FT}
+              max={RADIUS_MAX_FT}
+              step={1}
+              value={arrivalRadiusFt}
+              onChange={(e) => setArrivalRadiusFt(Number(e.target.value))}
+              disabled={navigating}
+              style={styles.slider}
+            />
+            <div style={styles.sliderValue}>
+              Current: <strong>{arrivalRadiusFt} ft</strong>
+            </div>
+            <div style={styles.sliderHint}>
+              Range: {RADIUS_MIN_FT} ft – {RADIUS_MAX_FT} ft (¼ mile)
+            </div>
           </section>
 
           {/* Route info */}
@@ -509,6 +556,21 @@ const styles = {
     fontSize: "0.875rem",
     outline: "none",
     width: "100%",
+  },
+  slider: {
+    width: "100%",
+    accentColor: "#3b82f6",
+    cursor: "pointer",
+  },
+  sliderValue: {
+    fontSize: "0.875rem",
+    color: "#e2e8f0",
+    textAlign: "center" as const,
+  },
+  sliderHint: {
+    fontSize: "0.7rem",
+    color: "#475569",
+    textAlign: "center" as const,
   },
   btn: {
     width: "100%",

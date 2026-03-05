@@ -18,6 +18,7 @@ Usage:
 import logging
 import math
 import threading
+import time
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,9 @@ class ArrivalDetector:
     the active destination.  When the distance drops below `radius_m`
     for the first time, returns True from `update_position()`.
 
+    A 90-second cooldown prevents duplicate triggers caused by GPS
+    jitter near the geofence boundary.
+
     Subsequent calls after arrival continue to return False until
     `clear()` is called (i.e. arrival fires only once per trip).
     """
@@ -53,6 +57,10 @@ class ArrivalDetector:
         self._arrived: bool = False
         self._active: bool = False
         self._last_position: PositionUpdate | None = None
+
+        # Cooldown: prevents re-triggering within 90s of the last arrival
+        self._cooldown_sec: float = 90.0
+        self._last_trigger_time: float = 0.0
 
     # ------------------------------------------------------------------
     # Control
@@ -71,6 +79,12 @@ class ArrivalDetector:
             lat, lon, self.radius_m,
         )
 
+    def set_radius(self, radius_m: float):
+        """Update the arrival geofence radius (thread-safe)."""
+        with self._lock:
+            self.radius_m = radius_m
+        logger.info("Arrival radius updated: %.1fm", radius_m)
+
     def clear(self):
         """Stop monitoring and reset all state."""
         with self._lock:
@@ -79,6 +93,7 @@ class ArrivalDetector:
             self._arrived = False
             self._active = False
             self._last_position = None
+            self._last_trigger_time = 0.0
         logger.info("Arrival detector cleared")
 
     # ------------------------------------------------------------------
@@ -89,16 +104,21 @@ class ArrivalDetector:
         """
         Feed a new GPS position into the detector.
 
-        Returns True exactly once — when the vehicle first enters the
-        arrival geofence.  Returns False in all other cases (including
-        after arrival has already been detected).
+        Returns True when the vehicle enters the arrival geofence AND
+        the cooldown period has elapsed since the last trigger.
+
+        Returns False when:
+        - Navigation is inactive
+        - Arrival was already detected this trip
+        - The vehicle is outside the geofence
+        - The 90-second cooldown is still active (GPS jitter protection)
 
         Args:
             lat: Current latitude in decimal degrees.
             lon: Current longitude in decimal degrees.
 
         Returns:
-            True on first geofence entry, False otherwise.
+            True on first valid geofence entry, False otherwise.
         """
         with self._lock:
             if not self._active or self._arrived:
@@ -113,7 +133,19 @@ class ArrivalDetector:
             )
 
             if dist <= self.radius_m:
+                now = time.monotonic()
+                cooldown_remaining = self._cooldown_sec - (now - self._last_trigger_time)
+
+                if cooldown_remaining > 0:
+                    logger.debug(
+                        "Arrival cooldown active — %.0fs remaining (GPS jitter suppressed)",
+                        cooldown_remaining,
+                    )
+                    return False
+
+                # Cooldown elapsed: fire arrival
                 self._arrived = True
+                self._last_trigger_time = now
                 logger.info(
                     "ARRIVED at destination (%.6f, %.6f) — distance=%.1fm",
                     self._dest_lat, self._dest_lon, dist,
@@ -148,6 +180,10 @@ class ArrivalDetector:
     def status(self) -> dict:
         """Serialisable status snapshot for API responses."""
         with self._lock:
+            now = time.monotonic()
+            cooldown_remaining = max(
+                0.0, self._cooldown_sec - (now - self._last_trigger_time)
+            )
             return {
                 "active": self._active,
                 "arrived": self._arrived,
@@ -160,6 +196,7 @@ class ArrivalDetector:
                     if self._last_position else None
                 ),
                 "radius_m": self.radius_m,
+                "cooldown_remaining_s": round(cooldown_remaining, 1),
             }
 
     # ------------------------------------------------------------------

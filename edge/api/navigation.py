@@ -49,10 +49,20 @@ class RouteResponse(BaseModel):
     eta_iso: str
 
 
+_FT_TO_M = 0.3048
+_RADIUS_FT_MIN = 1.0
+_RADIUS_FT_MAX = 1320.0   # ¼ mile
+_RADIUS_FT_DEFAULT = 300.0
+
+
 class StartNavRequest(BaseModel):
     dest_lat: float
     dest_lon: float
     display_name: str = ""
+    radius_ft: float = Field(
+        default=_RADIUS_FT_DEFAULT,
+        description="Arrival geofence radius in feet (1–1320 ft, ¼ mile max)",
+    )
 
 class GPSRequest(BaseModel):
     lat: float
@@ -110,11 +120,21 @@ def start_navigation(body: StartNavRequest, request: Request):
     """
     Activate navigation to a destination.
 
-    - Sets the arrival detector geofence.
+    - Validates radius_ft (1–1320 ft) and converts to metres.
+    - Updates the arrival detector radius and geofence.
     - Switches the LPR pipeline to IDLE (no scanning while en route).
     - Stores destination in session state.
     """
+    if not (_RADIUS_FT_MIN <= body.radius_ft <= _RADIUS_FT_MAX):
+        raise HTTPException(
+            status_code=400,
+            detail=f"radius_ft must be between {_RADIUS_FT_MIN:.0f} and {_RADIUS_FT_MAX:.0f} ft",
+        )
+
+    radius_m = body.radius_ft * _FT_TO_M
+
     nav = _nav(request)
+    nav.arrival_detector.set_radius(radius_m)
     nav.arrival_detector.set_destination(body.dest_lat, body.dest_lon)
 
     # Switch pipeline to IDLE — vehicle is driving, not scanning
@@ -125,11 +145,13 @@ def start_navigation(body: StartNavRequest, request: Request):
         "lat": body.dest_lat,
         "lon": body.dest_lon,
         "display_name": body.display_name,
+        "radius_ft": body.radius_ft,
+        "radius_m": round(radius_m, 2),
     }
 
     logger.info(
-        "Navigation started → (%.6f, %.6f) %s",
-        body.dest_lat, body.dest_lon, body.display_name,
+        "Navigation started → (%.6f, %.6f) %s  radius=%.0fft (%.1fm)",
+        body.dest_lat, body.dest_lon, body.display_name, body.radius_ft, radius_m,
     )
     return {"status": "navigating", "destination": nav.destination}
 
