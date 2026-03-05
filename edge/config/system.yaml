@@ -3,10 +3,10 @@
 #
 # MODEL STRATEGY (Phase 1):
 #   All models are PRETRAINED. No custom training or fine-tuning required.
-#   - YOLOv8n: COCO pretrained (vehicle detection)
-#   - YOLOv8s: Pretrained US-plate detection model
-#   - CRNN: Pretrained OCR model
-#   - EfficientNet-Lite0: Pretrained classifier
+#   - YOLOv8n:     COCO pretrained (vehicle detection)
+#   - YOLOv8n-LP:  Pretrained US-plate detection model
+#   - PP-OCRv4:    PaddleOCR English recognition model
+#   - YOLOv8n-cls: ImageNet pretrained (vehicle classification)
 #   Custom fine-tuning pipelines are deferred to Phase 3.
 #
 # SCOPE: US plates only. No EU/International support.
@@ -32,7 +32,7 @@ inference:
   frame_skip_enabled: true
 
   vehicle_detection:
-    model_path: "models/vehicle/yolov8n.engine"
+    model_path: "models/vehicle/vehicle.engine"  # YOLOv8n COCO pretrained
     input_size: 640
     confidence_threshold: 0.45
     nms_threshold: 0.5
@@ -43,7 +43,7 @@ inference:
     # DO NOT upgrade to YOLOv8s/m/l - GPU budget locked
 
   plate_detection:
-    model_path: "models/plate/yolov8s_plate.engine"
+    model_path: "models/plate/plate.engine"  # YOLOv8n-LP US-plate pretrained
     input_size: 640
     confidence_threshold: 0.50
     nms_threshold: 0.4
@@ -54,23 +54,23 @@ inference:
     # DO NOT upgrade to YOLOv8m/l - GPU budget locked
 
   ocr:
-    model_path: "models/ocr/crnn_plate.engine"
-    input_width: 200
-    input_height: 64
+    model_path: "models/ocr/ocr.engine"  # PaddleOCR PP-OCRv4 English rec
+    input_width: 320    # PP-OCRv4 rec: W=320 (fixed for plate crops)
+    input_height: 48    # PP-OCRv4 rec: H=48
     confidence_threshold: 0.60
     min_plate_chars: 2
     max_plate_chars: 8
     precision: "fp16"
-    pretrained: true  # Pretrained CRNN, no custom training needed
-    charset: "A-Z0-9"  # US plates only
+    pretrained: true  # Pretrained PP-OCRv4, no custom training needed
+    charset: "A-Z0-9"  # Post-processing validates US plates only
     validation_regex: "^[A-Z0-9]{2,8}$"
     # Budget: ~30 MB VRAM
 
   classifier:
-    model_path: "models/classifier/efficientnet_lite0.engine"
+    model_path: "models/classifier/classifier.engine"  # YOLOv8n-cls ImageNet
     input_size: 224
-    precision: "int8"
-    pretrained: true  # Pretrained EfficientNet-Lite0, no custom training needed
+    precision: "fp16"
+    pretrained: true  # ImageNet pretrained YOLOv8n-cls, no custom training needed
     # Budget: ~15 MB VRAM
 
   tracker:
