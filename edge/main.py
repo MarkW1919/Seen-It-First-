@@ -37,6 +37,9 @@ from edge.storage.repository import DetectionRepository
 from edge.system.thermal import ThermalMonitor
 from edge.system.monitoring import SystemMonitor
 from edge.system.alerts import AlertManager
+from edge.evidence.capture import SnapshotCapture
+from edge.evidence.storage import EvidenceStorage
+from edge.evidence.cleanup import MediaRetentionManager
 
 logger = logging.getLogger("seen-it-first")
 
@@ -112,6 +115,9 @@ class EdgeService:
         self.hotlist_matcher: HotlistMatcher | None = None
         self.event_publisher: EventPublisher | None = None
         self.fusion_engine: DetectionFusionEngine | None = None
+        self.snapshot_capture: SnapshotCapture | None = None
+        self.evidence_storage: EvidenceStorage | None = None
+        self.retention_manager: MediaRetentionManager | None = None
         self.db: Database | None = None
         self.repo: DetectionRepository | None = None
         self.thermal: ThermalMonitor | None = None
@@ -184,10 +190,21 @@ class EdgeService:
         # Event publisher (ws_manager set later in _start_api_server)
         self.event_publisher = EventPublisher()
 
+        # Evidence capture and storage
+        evidence_cfg = self.config.get("evidence", {})
+        evidence_root = str(BASE_DIR / evidence_cfg.get("root", "data/evidence"))
+        self.snapshot_capture = SnapshotCapture(
+            evidence_root=evidence_root,
+            jpeg_quality=evidence_cfg.get("jpeg_quality", 85),
+        )
+        self.evidence_storage = EvidenceStorage(self.repo)
+
         # Detection fusion engine
         self.fusion_engine = DetectionFusionEngine(
             event_publisher=self.event_publisher,
             hotlist_matcher=self.hotlist_matcher,
+            snapshot_capture=self.snapshot_capture,
+            evidence_storage=self.evidence_storage,
         )
 
         # Scheduler
@@ -207,9 +224,17 @@ class EdgeService:
         # Alert manager
         self.alert_manager = AlertManager(hotlist_config)
 
+        # Media retention manager (background cleanup thread)
+        self.retention_manager = MediaRetentionManager(
+            evidence_root=evidence_root,
+            retention_days=evidence_cfg.get("retention_days", 30),
+        )
+
         # Navigation API server (FastAPI + uvicorn, daemon thread)
         # Also wires ws_manager into event_publisher
         self._start_api_server()
+
+        logger.info("CameraManager started")
 
         logger.info("Initialization complete")
         return True
@@ -251,6 +276,10 @@ class EdgeService:
         # Register signal handlers
         signal.signal(signal.SIGTERM, self._signal_handler)
         signal.signal(signal.SIGINT, self._signal_handler)
+
+        # Start media retention background thread
+        if self.retention_manager:
+            self.retention_manager.start()
 
         # Start cameras
         results = self.camera_manager.start_all()
@@ -407,6 +436,12 @@ class EdgeService:
                 self.scheduler.ocr.release()
             if self.scheduler.classifier:
                 self.scheduler.classifier.release()
+
+        if self.snapshot_capture:
+            self.snapshot_capture.shutdown(wait=True)
+
+        if self.retention_manager:
+            self.retention_manager.stop()
 
         if self.db:
             self.db.close()

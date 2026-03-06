@@ -17,7 +17,7 @@ Total target: < 30 ms per frame on Jetson Orin Nano Super.
 
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -44,15 +44,24 @@ class Detection:
 
     Produced by InferencePipeline.process_frame() for every confirmed track
     and forwarded to DetectionFusionEngine for multi-frame plate confirmation.
+
+    The optional ``frame`` and ``plate_bbox`` fields carry the raw frame and
+    plate coordinates needed for evidence capture.  The fusion engine stores
+    only the highest-confidence frame per track and clears it immediately
+    after capturing evidence to prevent memory accumulation.
     """
     track_id:      int
     camera_id:     str
-    bbox:          list[float]    # [x1, y1, x2, y2] in pixel space
+    bbox:          list[float]          # vehicle [x1, y1, x2, y2]
     vehicle_class: str
     vehicle_conf:  float
     plate_text:    str
     plate_conf:    float
     timestamp:     float
+    # Evidence fields — populated only when a plate read is available.
+    # The fusion engine pops and discards these after evidence capture.
+    frame:         np.ndarray | None = field(default=None, repr=False)
+    plate_bbox:    list[float] | None = None   # plate [x1, y1, x2, y2]
 
 
 class InferencePipeline:
@@ -186,14 +195,16 @@ class InferencePipeline:
             )
         t_ocr = (time.monotonic() - t0) * 1000
 
-        # ── Stage 5a: Associate OCR results back to tracks (IoU) ──────
-        self._associate_plates_to_tracks(result)
+        # ── Stage 5a: Associate OCR results → tracks, collect plate bboxes ─
+        plate_bboxes = self._associate_plates_to_tracks(result)
 
         # ── Stage 6: Build Detection objects → fusion engine ──────────
         for track in result.tracks:
             if not track.confirmed:
                 continue
             clf = result.classifications.get(track.track_id)
+            pb  = plate_bboxes.get(track.track_id)
+
             detection = Detection(
                 track_id=track.track_id,
                 camera_id=cam_id,
@@ -203,6 +214,10 @@ class InferencePipeline:
                 plate_text=track.plate_text,
                 plate_conf=track.plate_confidence,
                 timestamp=packet.timestamp,
+                # Pass frame + plate_bbox only when a plate read exists so the
+                # fusion engine can capture evidence on confirmation.
+                frame=np.ascontiguousarray(frame) if pb is not None else None,
+                plate_bbox=pb,
             )
             self._fusion.add_detection(detection)
 
@@ -236,12 +251,23 @@ class InferencePipeline:
     # Helpers
     # ------------------------------------------------------------------
 
-    def _associate_plates_to_tracks(self, result: PipelineResult):
-        """Assign OCR results to the nearest track by IoU, keeping best conf."""
+    def _associate_plates_to_tracks(
+        self, result: PipelineResult
+    ) -> dict[int, list[float]]:
+        """
+        Assign OCR results to the nearest track by IoU, keeping best confidence.
+
+        Returns:
+            Dict mapping track_id → plate bounding box [x1,y1,x2,y2] for the
+            highest-confidence association.  Used by Stage 6 to pass plate
+            coords to the fusion engine for evidence capture.
+        """
+        plate_bboxes: dict[int, list[float]] = {}
+
         for ocr_result in result.ocr_results:
-            plate = ocr_result.plate_detection
+            plate   = ocr_result.plate_detection
             vehicle = plate.vehicle_box
-            vbox = np.array([vehicle.x1, vehicle.y1, vehicle.x2, vehicle.y2])
+            vbox    = np.array([vehicle.x1, vehicle.y1, vehicle.x2, vehicle.y2])
 
             best_track = None
             best_iou   = 0.0
@@ -256,6 +282,12 @@ class InferencePipeline:
                 if ocr_result.confidence > best_track.plate_confidence:
                     best_track.plate_text       = ocr_result.text
                     best_track.plate_confidence = ocr_result.confidence
+                    plate_bboxes[best_track.track_id] = [
+                        float(plate.x1), float(plate.y1),
+                        float(plate.x2), float(plate.y2),
+                    ]
+
+        return plate_bboxes
 
 
 # ---------------------------------------------------------------------------

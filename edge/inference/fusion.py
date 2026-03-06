@@ -11,6 +11,10 @@ Confirmation criteria:
 Once a (camera_id, track_id) pair is confirmed it is never re-confirmed,
 preventing duplicate alerts within the same tracking lifetime.
 
+After confirmation the engine calls SnapshotCapture to save vehicle, plate,
+and composite images, then calls EvidenceStorage to persist the record to
+SQLite.  Both operations are non-blocking (JPEG writes go to a thread pool).
+
 Stale track history is evicted every EVICTION_INTERVAL_S seconds to keep
 memory usage bounded for 24/7 operation.
 """
@@ -22,10 +26,14 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+import numpy as np
+
 if TYPE_CHECKING:
     from edge.inference.pipeline import Detection
     from edge.inference.events import EventPublisher
     from edge.hotlist.matcher import HotlistMatcher
+    from edge.evidence.capture import SnapshotCapture
+    from edge.evidence.storage import EvidenceStorage
 
 logger = logging.getLogger(__name__)
 
@@ -55,18 +63,40 @@ class DetectionFusionEngine:
         self,
         event_publisher: "EventPublisher",
         hotlist_matcher: "HotlistMatcher | None" = None,
+        snapshot_capture: "SnapshotCapture | None" = None,
+        evidence_storage: "EvidenceStorage | None" = None,
     ):
-        self._publisher = event_publisher
-        self._hotlist = hotlist_matcher
+        self._publisher       = event_publisher
+        self._hotlist         = hotlist_matcher
+        self._snapshot        = snapshot_capture
+        self._evidence        = evidence_storage
 
-        # (camera_id, track_id) → list of Detection objects
+        # (camera_id, track_id) → list of Detection objects (plate_text reads)
         self._history: dict[tuple[str, int], list["Detection"]] = {}
         # (camera_id, track_id) → monotonic timestamp of last add
         self._last_seen: dict[tuple[str, int], float] = {}
         # Confirmed keys — never re-confirm within the same tracking lifetime
         self._confirmed: set[tuple[str, int]] = set()
 
+        # Best evidence per track: (frame, plate_bbox) for the highest-conf read
+        # Frame is stored once and cleared immediately after evidence capture.
+        self._best_evidence: dict[tuple[str, int], tuple[np.ndarray, list[float] | None, float]] = {}
+        # key → (frame, plate_bbox, plate_conf)
+
         self._last_eviction = time.monotonic()
+
+    # ------------------------------------------------------------------
+    # Wiring setters (called after construction to avoid circular imports)
+    # ------------------------------------------------------------------
+
+    def set_hotlist_matcher(self, matcher: "HotlistMatcher"):
+        self._hotlist = matcher
+
+    def set_snapshot_capture(self, capture: "SnapshotCapture"):
+        self._snapshot = capture
+
+    def set_evidence_storage(self, storage: "EvidenceStorage"):
+        self._evidence = storage
 
     # ------------------------------------------------------------------
     # Public API
@@ -77,11 +107,24 @@ class DetectionFusionEngine:
         Add a frame-level detection to the fusion buffer.
 
         If confirmation criteria are met for the associated track, emits
-        a confirmed detection event and runs the hotlist check.
+        a confirmed detection event, captures evidence images, and runs
+        the hotlist check.
         """
         key = (detection.camera_id, detection.track_id)
         now = time.monotonic()
         self._last_seen[key] = now
+
+        # Keep best evidence frame (highest plate confidence with a frame)
+        if detection.frame is not None:
+            existing = self._best_evidence.get(key)
+            if existing is None or detection.plate_conf > existing[2]:
+                self._best_evidence[key] = (
+                    detection.frame,
+                    detection.plate_bbox,
+                    detection.plate_conf,
+                )
+            # Detach frame from Detection so it can be GC'd if not selected
+            detection.frame = None
 
         # Only accumulate reads that have a plate text
         if detection.plate_text:
@@ -100,10 +143,6 @@ class DetectionFusionEngine:
             self._evict_stale(now)
             self._last_eviction = now
 
-    def set_hotlist_matcher(self, matcher: "HotlistMatcher"):
-        """Attach (or replace) the hotlist matcher after construction."""
-        self._hotlist = matcher
-
     # ------------------------------------------------------------------
     # Confirmation logic
     # ------------------------------------------------------------------
@@ -115,7 +154,7 @@ class DetectionFusionEngine:
         Confirmation requires:
             - ≥ CONFIRM_MIN_FRAMES reads with confidence ≥ CONFIRM_MIN_CONF
             - The most common normalised plate text among those reads is
-              consistent (i.e. it is the plurality winner).
+              the plurality winner.
         """
         high_conf = [
             d for d in history
@@ -140,7 +179,7 @@ class DetectionFusionEngine:
         ]
         best = max(candidates, key=lambda d: d.plate_conf)
 
-        # Mark confirmed
+        # Mark confirmed before any I/O to prevent double-confirmation
         self._confirmed.add(key)
 
         camera_id, track_id = key
@@ -151,19 +190,73 @@ class DetectionFusionEngine:
             count, len(history),
         )
 
-        # Publish detection event
+        # ── Evidence capture ──────────────────────────────────────────
+        vehicle_path   = ""
+        plate_path     = ""
+        composite_path = ""
+
+        evidence = self._best_evidence.pop(key, None)
+        if evidence is not None and self._snapshot is not None:
+            ev_frame, ev_plate_bbox, _ = evidence
+            try:
+                vehicle_path = self._snapshot.capture_vehicle(
+                    ev_frame, best.bbox, camera_id
+                )
+                if ev_plate_bbox is not None:
+                    plate_path = self._snapshot.capture_plate(
+                        ev_frame, ev_plate_bbox, best_text, camera_id
+                    )
+                composite_path = self._snapshot.capture_composite(
+                    ev_frame, best.bbox, ev_plate_bbox
+                )
+                logger.debug(
+                    "Evidence scheduled: vehicle=%s plate=%s composite=%s",
+                    vehicle_path, plate_path, composite_path,
+                )
+            except Exception:
+                logger.exception(
+                    "Evidence capture failed: track=%d cam=%s", track_id, camera_id
+                )
+            finally:
+                # Release frame reference regardless of success
+                del ev_frame
+
+        # ── DB persistence ────────────────────────────────────────────
+        if self._evidence is not None:
+            try:
+                self._evidence.store_detection(
+                    vehicle_path=vehicle_path,
+                    plate_path=plate_path,
+                    composite_path=composite_path,
+                    plate_text=best_text,
+                    vehicle_class=best.vehicle_class,
+                    confidence=best.plate_conf,
+                    camera_id=camera_id,
+                    track_id=track_id,
+                    bbox=best.bbox,
+                )
+            except Exception:
+                logger.exception(
+                    "EvidenceStorage.store_detection failed: track=%d cam=%s",
+                    track_id, camera_id,
+                )
+
+        # ── WebSocket event ───────────────────────────────────────────
         self._publisher.publish_detection({
-            "track_id":      track_id,
-            "camera_id":     camera_id,
-            "bbox":          best.bbox,
-            "vehicle_class": best.vehicle_class,
-            "vehicle_conf":  best.vehicle_conf,
-            "plate_text":    best_text,
-            "plate_conf":    best.plate_conf,
-            "timestamp":     best.timestamp,
+            "track_id":       track_id,
+            "camera_id":      camera_id,
+            "bbox":           best.bbox,
+            "vehicle_class":  best.vehicle_class,
+            "vehicle_conf":   best.vehicle_conf,
+            "plate_text":     best_text,
+            "plate_conf":     best.plate_conf,
+            "timestamp":      best.timestamp,
+            "vehicle_path":   vehicle_path,
+            "plate_path":     plate_path,
+            "composite_path": composite_path,
         })
 
-        # Hotlist check
+        # ── Hotlist check ─────────────────────────────────────────────
         if self._hotlist is not None:
             alerts = self._hotlist.match_plate(
                 plate_text=best_text,
@@ -188,7 +281,7 @@ class DetectionFusionEngine:
     # ------------------------------------------------------------------
 
     def _evict_stale(self, now: float):
-        """Remove history for tracks that have not been updated recently."""
+        """Remove history and evidence frames for tracks not recently updated."""
         stale = [
             key for key, ts in self._last_seen.items()
             if (now - ts) > HISTORY_MAX_AGE_S
@@ -197,6 +290,7 @@ class DetectionFusionEngine:
             self._history.pop(key, None)
             self._last_seen.pop(key, None)
             self._confirmed.discard(key)
+            self._best_evidence.pop(key, None)   # release frame memory
 
         if stale:
             logger.debug("Fusion: evicted %d stale tracks", len(stale))
