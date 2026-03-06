@@ -32,6 +32,25 @@ export interface NavStatus {
   ws_clients: number;
 }
 
+/** A ranked vehicle from GET /navigation/targets */
+export interface RankedVehicle {
+  vehicle_id:    string;
+  vehicle_type:  string;
+  make:          string;
+  model:         string;
+  color:         string;
+  year_range:    string;
+  plate:         string | null;
+  confidence:    number;
+  distance_ft:   number;
+  hotlist_match: boolean;
+  score:         number;
+  latitude:      number;
+  longitude:     number;
+  timestamp:     number;
+  camera_id:     string;
+}
+
 /** WebSocket event payloads */
 export type WsEvent =
   | { event: "ARRIVED"; lat: number; lon: number; destination: { lat: number; lon: number; display_name: string } | null }

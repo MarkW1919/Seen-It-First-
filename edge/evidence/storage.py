@@ -51,6 +51,12 @@ class EvidenceStorage:
         track_id:       int | None = None,
         bbox:           list[float] | None = None,
         night_mode:     bool = False,
+        make:           str = "",
+        model:          str = "",
+        color:          str = "",
+        year_range:     str = "",
+        latitude:       float = 0.0,
+        longitude:      float = 0.0,
     ) -> int:
         """
         Insert a confirmed detection record into the database.
@@ -85,6 +91,13 @@ class EvidenceStorage:
                 plate_path=plate_path,
                 composite_path=composite_path,
                 night_mode=night_mode,
+                make=make,
+                model=model,
+                color=color,
+                year_range=year_range,
+                confidence=confidence,
+                latitude=latitude,
+                longitude=longitude,
             )
             logger.debug(
                 "Evidence stored: row=%d plate=%s cam=%s vehicle=%s",

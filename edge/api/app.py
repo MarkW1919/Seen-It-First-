@@ -37,6 +37,8 @@ from edge.api.navigation import router as nav_router
 if TYPE_CHECKING:
     from edge.inference.scheduler import InferenceScheduler
     from edge.inference.events import EventPublisher
+    from edge.ranking.engine import RankingEngine
+    from edge.api.state import GpsState
 
 logger = logging.getLogger(__name__)
 
@@ -83,10 +85,12 @@ class ConnectionManager:
 # ---------------------------------------------------------------------------
 
 def create_app(
-    scheduler: "InferenceScheduler",
-    config: dict | None = None,
-    ws_manager: ConnectionManager | None = None,
-    event_publisher: "EventPublisher | None" = None,
+    scheduler:        "InferenceScheduler",
+    config:           dict | None = None,
+    ws_manager:       ConnectionManager | None = None,
+    event_publisher:  "EventPublisher | None" = None,
+    ranking_engine:   "RankingEngine | None" = None,
+    gps_state:        "GpsState | None" = None,
 ) -> FastAPI:
     """
     Build and return the FastAPI application.
@@ -122,6 +126,8 @@ def create_app(
         router=router_svc,
         arrival_detector=arrival,
         ws_manager=ws_manager,
+        ranking_engine=ranking_engine,
+        gps_state=gps_state,
     )
 
     @asynccontextmanager

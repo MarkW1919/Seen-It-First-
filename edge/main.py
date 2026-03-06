@@ -40,6 +40,8 @@ from edge.system.alerts import AlertManager
 from edge.evidence.capture import SnapshotCapture
 from edge.evidence.storage import EvidenceStorage
 from edge.evidence.cleanup import MediaRetentionManager
+from edge.ranking.engine import RankingEngine
+from edge.api.state import GpsState
 
 logger = logging.getLogger("seen-it-first")
 
@@ -118,6 +120,8 @@ class EdgeService:
         self.snapshot_capture: SnapshotCapture | None = None
         self.evidence_storage: EvidenceStorage | None = None
         self.retention_manager: MediaRetentionManager | None = None
+        self.ranking_engine: RankingEngine | None = None
+        self.gps_state: GpsState | None = None
         self.db: Database | None = None
         self.repo: DetectionRepository | None = None
         self.thermal: ThermalMonitor | None = None
@@ -187,6 +191,12 @@ class EdgeService:
             cooldown_sec=hotlist_config.get("cooldown_sec", 60),
         )
 
+        # GPS state (written by API thread, read by inference thread)
+        self.gps_state = GpsState()
+
+        # Ranking engine (written by inference thread, read by API thread)
+        self.ranking_engine = RankingEngine(hotlist_matcher=self.hotlist_matcher)
+
         # Event publisher (ws_manager set later in _start_api_server)
         self.event_publisher = EventPublisher()
 
@@ -205,6 +215,7 @@ class EdgeService:
             hotlist_matcher=self.hotlist_matcher,
             snapshot_capture=self.snapshot_capture,
             evidence_storage=self.evidence_storage,
+            ranking_engine=self.ranking_engine,
         )
 
         # Scheduler
@@ -220,6 +231,10 @@ class EdgeService:
             fusion_engine=self.fusion_engine,
             event_publisher=self.event_publisher,
         )
+
+        # Wire GPS state into the pipeline so detections carry operator position
+        if hasattr(self.scheduler, "pipeline") and self.scheduler.pipeline is not None:
+            self.scheduler.pipeline.set_gps_state(self.gps_state)
 
         # Alert manager
         self.alert_manager = AlertManager(hotlist_config)
@@ -256,6 +271,8 @@ class EdgeService:
             config=nav_cfg,
             ws_manager=ws_manager,
             event_publisher=self.event_publisher,
+            ranking_engine=self.ranking_engine,
+            gps_state=self.gps_state,
         )
 
         host = api_cfg.get("host", "0.0.0.0")

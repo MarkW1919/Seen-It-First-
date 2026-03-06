@@ -72,23 +72,31 @@ class DetectionRepository:
         plate_path:       str = "",
         composite_path:   str = "",
         night_mode:       bool = False,
+        make:             str = "",
+        model:            str = "",
+        color:            str = "",
+        year_range:       str = "",
+        confidence:       float = 0.0,
+        latitude:         float = 0.0,
+        longitude:        float = 0.0,
     ) -> int:
         """
-        Insert a confirmed-detection record that includes evidence image paths.
+        Insert a confirmed-detection record that includes evidence image paths
+        and full vehicle intelligence fields.
 
-        This method takes flat scalar args (no PipelineResult dependency) so
-        it can be called directly from the evidence storage layer.  Returns
-        the row ID of the inserted record.
+        Takes flat scalar args (no PipelineResult dependency) so it can be
+        called directly from the evidence storage layer.  Returns the row ID.
         """
         cursor = self.db.execute(
             """
             INSERT INTO detections
                 (timestamp, camera_id, track_id, plate_text, plate_confidence,
                  vehicle_class, vehicle_color, year_bucket,
+                 make, model, year_range, confidence, latitude, longitude,
                  bbox_x1, bbox_y1, bbox_x2, bbox_y2,
                  snapshot_path, vehicle_path, plate_path, composite_path,
                  night_mode)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 timestamp,
@@ -97,8 +105,14 @@ class DetectionRepository:
                 plate_text,
                 plate_confidence,
                 vehicle_class,
-                "",          # vehicle_color — not available at fusion stage
-                "",          # year_bucket
+                color,        # vehicle_color
+                year_range,   # year_bucket (legacy col)
+                make,
+                model,
+                year_range,
+                confidence,
+                latitude,
+                longitude,
                 bbox[0], bbox[1], bbox[2], bbox[3],
                 composite_path,   # snapshot_path = composite for dashboard compat
                 vehicle_path,

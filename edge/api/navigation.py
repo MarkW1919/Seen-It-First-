@@ -188,6 +188,9 @@ async def update_gps(body: GPSRequest, request: Request):
     nav = _nav(request)
     nav.current_pos = {"lat": body.lat, "lon": body.lon}
 
+    # Update thread-safe GPS state so inference pipeline can stamp detections
+    nav.gps_state.update(body.lat, body.lon)
+
     arrived = nav.arrival_detector.update_position(body.lat, body.lon)
     if arrived:
         # Switch pipeline from IDLE → ACTIVE
@@ -208,6 +211,32 @@ async def update_gps(body: GPSRequest, request: Request):
         "arrived": arrived,
         "distance_m": nav.arrival_detector.last_distance_m,
     }
+
+
+@router.get("/targets")
+def get_targets(request: Request):
+    """
+    Return ranked vehicle intelligence for the current destination.
+
+    Vehicles are ranked by likelihood of being the target, using detection
+    confidence, plate readability, distance to destination, hotlist match,
+    and recency.  Returns the top 10 candidates.
+
+    Requires an active destination (set via POST /navigation/start).
+    Returns an empty list when no destination is set or no vehicles have
+    been detected within the last 60 seconds.
+    """
+    nav = _nav(request)
+
+    if nav.ranking_engine is None:
+        return {"targets": [], "error": "ranking_engine not initialised"}
+
+    dest = nav.destination
+    if not dest:
+        return {"targets": []}
+
+    ranked = nav.ranking_engine.rank_vehicles(dest["lat"], dest["lon"])
+    return {"targets": [v.to_dict() for v in ranked[:10]]}
 
 
 @router.get("/status")

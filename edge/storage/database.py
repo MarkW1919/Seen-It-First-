@@ -66,6 +66,12 @@ class Database:
             ("detections", "vehicle_path",   "TEXT"),
             ("detections", "plate_path",     "TEXT"),
             ("detections", "composite_path", "TEXT"),
+            ("detections", "make",           "TEXT"),
+            ("detections", "model",          "TEXT"),
+            ("detections", "year_range",     "TEXT"),
+            ("detections", "confidence",     "REAL"),
+            ("detections", "latitude",       "REAL"),
+            ("detections", "longitude",      "REAL"),
         ]
         for table, column, col_type in new_columns:
             try:

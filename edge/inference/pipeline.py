@@ -13,6 +13,11 @@ Stage order (all on Jetson GPU via TensorRT FP16):
     6. Plate ↔ track fusion     — DetectionFusionEngine, ~0.5 ms
 
 Total target: < 30 ms per frame on Jetson Orin Nano Super.
+
+Vehicle classification (Stage 3) runs for EVERY confirmed tracked vehicle
+regardless of whether a plate is detected.  Classification results are
+cached per (camera_id, track_id) so that subsequent frames can access the
+make/model/color/year_range without re-running the classifier.
 """
 
 import logging
@@ -28,11 +33,12 @@ from edge.inference.tracker import Tracker
 from edge.inference.vehicle_detector import VehicleDetector
 from edge.inference.plate_detector import PlateDetector
 from edge.inference.ocr import PlateOCR
-from edge.inference.classifier import VehicleClassifier
+from edge.inference.classifier import VehicleClassifier, VehicleClassification
 
 if TYPE_CHECKING:
     from edge.inference.fusion import DetectionFusionEngine
     from edge.inference.events import EventPublisher
+    from edge.api.state import GpsState
 
 logger = logging.getLogger(__name__)
 
@@ -40,15 +46,18 @@ logger = logging.getLogger(__name__)
 @dataclass
 class Detection:
     """
-    A fully resolved vehicle detection fused across multiple pipeline stages.
+    A fully resolved vehicle detection fused across all pipeline stages.
 
     Produced by InferencePipeline.process_frame() for every confirmed track
-    and forwarded to DetectionFusionEngine for multi-frame plate confirmation.
+    and forwarded to DetectionFusionEngine.
 
-    The optional ``frame`` and ``plate_bbox`` fields carry the raw frame and
-    plate coordinates needed for evidence capture.  The fusion engine stores
-    only the highest-confidence frame per track and clears it immediately
-    after capturing evidence to prevent memory accumulation.
+    Classification fields (make/model/color/year_range) are populated from
+    the per-track classification cache even when no plate is detected.
+    GPS fields carry the operator's position at detection time.
+
+    The optional ``frame`` and ``plate_bbox`` fields carry raw frame data
+    for evidence capture.  The fusion engine releases these immediately
+    after capture to prevent memory accumulation.
     """
     track_id:      int
     camera_id:     str
@@ -58,10 +67,17 @@ class Detection:
     plate_text:    str
     plate_conf:    float
     timestamp:     float
+    # Classification fields — populated from cache; "unknown" if unavailable
+    make:          str = "unknown"
+    model:         str = "unknown"
+    color:         str = "unknown"
+    year_range:    str = "unknown"
+    # GPS — operator position at detection time (0.0 if GPS not available)
+    latitude:      float = 0.0
+    longitude:     float = 0.0
     # Evidence fields — populated only when a plate read is available.
-    # The fusion engine pops and discards these after evidence capture.
     frame:         np.ndarray | None = field(default=None, repr=False)
-    plate_bbox:    list[float] | None = None   # plate [x1, y1, x2, y2]
+    plate_bbox:    list[float] | None = None
 
 
 class InferencePipeline:
@@ -70,21 +86,8 @@ class InferencePipeline:
     to the fusion engine and event publisher.
 
     One InferencePipeline instance is shared across all cameras via the
-    InferenceScheduler.  Per-camera state (trackers) is managed internally.
-
-    Usage::
-
-        pipeline = InferencePipeline(
-            vehicle_detector=vd,
-            plate_detector=pd,
-            ocr=ocr,
-            classifier=clf,
-            tracker_config=tracker_cfg,
-            fusion_engine=fusion,
-            event_publisher=publisher,
-        )
-        result = pipeline.process_frame(frame_packet, night_mode=False)
-        # result is a PipelineResult (backward-compatible with scheduler API)
+    InferenceScheduler.  Per-camera state (trackers, clf cache) is managed
+    internally.
     """
 
     def __init__(
@@ -108,6 +111,21 @@ class InferencePipeline:
         # Per-camera DeepSORT trackers
         self.trackers: dict[str, Tracker] = {}
 
+        # Persistent classification cache: (camera_id, track_id) → result
+        # Populated once per track in Stage 3; used by Stage 6 for all frames.
+        self._clf_cache: dict[tuple[str, int], VehicleClassification] = {}
+
+        # GPS state provider — set via set_gps_state()
+        self._gps_state: "GpsState | None" = None
+
+    # ------------------------------------------------------------------
+    # Late-binding setters
+    # ------------------------------------------------------------------
+
+    def set_gps_state(self, gps_state: "GpsState"):
+        """Wire in a GpsState so detections carry current operator GPS."""
+        self._gps_state = gps_state
+
     # ------------------------------------------------------------------
     # Main entry point
     # ------------------------------------------------------------------
@@ -120,15 +138,9 @@ class InferencePipeline:
         """
         Run all inference stages on a single frame.
 
-        Args:
-            packet:     Frame captured by CameraCapture (includes frame array,
-                        camera_id, timestamp, frame_number).
-            night_mode: Whether the camera reports low-light conditions;
-                        enables CLAHE plate enhancement.
-
-        Returns:
-            PipelineResult — same structure the InferenceScheduler returned
-            before the pipeline refactor, so main.py is unchanged.
+        Classification runs for every confirmed track regardless of plate
+        detection.  Results are cached so subsequent frames access the
+        same make/model/color without re-running the classifier.
         """
         t_start = time.monotonic()
         cam_id = packet.camera_id
@@ -158,7 +170,9 @@ class InferencePipeline:
         else:
             result.tracks = tracker.update([])
 
-        # ── Stage 3: Vehicle classification ───────────────────────────
+        # ── Stage 3: Vehicle classification ────────────────────────────
+        # Runs for EVERY confirmed track regardless of plate detection.
+        # Results are cached in _clf_cache for the track's lifetime.
         t0 = time.monotonic()
         if (
             self.classifier is not None
@@ -166,15 +180,16 @@ class InferencePipeline:
             and not self.classifier.is_suspended
         ):
             for track in result.tracks:
-                if track.confirmed and not track.classified:
+                cache_key = (cam_id, track.track_id)
+                if track.confirmed and cache_key not in self._clf_cache:
                     crop = _crop_track(frame, track)
                     if crop is not None:
                         clf_result = self.classifier.classify(crop)
                         if clf_result is not None:
                             result.classifications[track.track_id] = clf_result
+                            self._clf_cache[cache_key] = clf_result
                             track.classified = True
-                            if hasattr(clf_result, "vehicle_class"):
-                                track.class_name = clf_result.vehicle_class
+                            track.class_name = clf_result.vehicle_type
         t_clf = (time.monotonic() - t0) * 1000
 
         # ── Stage 4: Plate detection (vehicle crops only) ─────────────
@@ -198,24 +213,40 @@ class InferencePipeline:
         # ── Stage 5a: Associate OCR results → tracks, collect plate bboxes ─
         plate_bboxes = self._associate_plates_to_tracks(result)
 
-        # ── Stage 6: Build Detection objects → fusion engine ──────────
+        # ── Read current GPS position ──────────────────────────────────
+        lat, lon = 0.0, 0.0
+        if self._gps_state is not None:
+            lat, lon = self._gps_state.get()
+
+        # ── Stage 6: Build Detection objects for ALL confirmed tracks ──
+        # Classification data comes from cache (set this frame or prior).
+        # Plate data is optional — vehicles without plates still emit a
+        # Detection so the ranking engine can rank them.
         for track in result.tracks:
             if not track.confirmed:
                 continue
-            clf = result.classifications.get(track.track_id)
+
+            cache_key = (cam_id, track.track_id)
+            clf = result.classifications.get(track.track_id) \
+                  or self._clf_cache.get(cache_key)
             pb  = plate_bboxes.get(track.track_id)
 
             detection = Detection(
                 track_id=track.track_id,
                 camera_id=cam_id,
                 bbox=track.bbox.tolist(),
-                vehicle_class=track.class_name or (clf.vehicle_class if clf else ""),
+                vehicle_class=track.class_name or (clf.vehicle_type if clf else "vehicle"),
                 vehicle_conf=float(track.bbox[4]) if len(track.bbox) > 4 else 0.0,
-                plate_text=track.plate_text,
+                plate_text=track.plate_text or "",
                 plate_conf=track.plate_confidence,
                 timestamp=packet.timestamp,
-                # Pass frame + plate_bbox only when a plate read exists so the
-                # fusion engine can capture evidence on confirmation.
+                make=clf.make if clf else "unknown",
+                model=clf.model if clf else "unknown",
+                color=clf.color if clf else "unknown",
+                year_range=clf.year_range if clf else "unknown",
+                latitude=lat,
+                longitude=lon,
+                # Attach frame copy + plate bbox only when a plate read exists
                 frame=np.ascontiguousarray(frame) if pb is not None else None,
                 plate_bbox=pb,
             )
@@ -255,12 +286,10 @@ class InferencePipeline:
         self, result: PipelineResult
     ) -> dict[int, list[float]]:
         """
-        Assign OCR results to the nearest track by IoU, keeping best confidence.
+        Assign OCR results to the nearest track by IoU.
 
         Returns:
-            Dict mapping track_id → plate bounding box [x1,y1,x2,y2] for the
-            highest-confidence association.  Used by Stage 6 to pass plate
-            coords to the fusion engine for evidence capture.
+            Dict mapping track_id → plate bounding box [x1,y1,x2,y2].
         """
         plate_bboxes: dict[int, list[float]] = {}
 
@@ -275,7 +304,7 @@ class InferencePipeline:
             for track in result.tracks:
                 iou = _iou(vbox, track.bbox)
                 if iou > best_iou:
-                    best_iou  = iou
+                    best_iou   = iou
                     best_track = track
 
             if best_track is not None and best_iou > 0.3:

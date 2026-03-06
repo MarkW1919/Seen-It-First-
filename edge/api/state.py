@@ -14,6 +14,37 @@ from edge.navigation.arrival_detector import ArrivalDetector
 
 if TYPE_CHECKING:
     from edge.inference.scheduler import InferenceScheduler
+    from edge.ranking.engine import RankingEngine
+
+
+class GpsState:
+    """
+    Thread-safe operator GPS position holder.
+
+    Written by the navigation GPS endpoint (uvicorn thread) and read by
+    the inference pipeline (inference thread) when building Detection
+    objects.  CPython's GIL makes float attribute writes atomic, so no
+    explicit lock is needed.
+    """
+
+    def __init__(self):
+        self._lat: float = 0.0
+        self._lon: float = 0.0
+
+    def update(self, lat: float, lon: float):
+        self._lat = lat
+        self._lon = lon
+
+    def get(self) -> tuple[float, float]:
+        return self._lat, self._lon
+
+    @property
+    def lat(self) -> float:
+        return self._lat
+
+    @property
+    def lon(self) -> float:
+        return self._lon
 
 
 class NavigationState:
@@ -24,17 +55,21 @@ class NavigationState:
 
     def __init__(
         self,
-        scheduler: "InferenceScheduler",
-        geocoder: Geocoder,
-        router: Router,
+        scheduler:        "InferenceScheduler",
+        geocoder:         Geocoder,
+        router:           Router,
         arrival_detector: ArrivalDetector,
-        ws_manager: Any,  # ConnectionManager — typed as Any to avoid re-importing app
+        ws_manager:       Any,       # ConnectionManager — typed as Any to avoid re-importing
+        ranking_engine:   "RankingEngine | None" = None,
+        gps_state:        "GpsState | None" = None,
     ):
-        self.scheduler = scheduler
-        self.geocoder = geocoder
-        self.router = router
+        self.scheduler        = scheduler
+        self.geocoder         = geocoder
+        self.router           = router
         self.arrival_detector = arrival_detector
-        self.ws_manager = ws_manager
+        self.ws_manager       = ws_manager
+        self.ranking_engine   = ranking_engine
+        self.gps_state        = gps_state or GpsState()
 
         # Navigation session state
         self.is_navigating: bool = False
