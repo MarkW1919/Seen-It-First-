@@ -24,6 +24,8 @@ CREATE TABLE IF NOT EXISTS detections (
     bbox_y1         INTEGER,
     bbox_x2         INTEGER,
     bbox_y2         INTEGER,
+    -- Vehicle fingerprint (type-make-model-year-color-hash)
+    fingerprint     TEXT,
     -- Evidence image paths
     snapshot_path   TEXT,
     vehicle_path    TEXT,

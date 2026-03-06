@@ -27,6 +27,10 @@ from edge.inference.vehicle_detector import VehicleDetector
 from edge.inference.plate_detector import PlateDetector
 from edge.inference.ocr import PlateOCR
 from edge.inference.classifier import VehicleClassifier
+from edge.inference.vehicle_classifier import VehicleClassifierModel
+from edge.inference.vehicle_color import VehicleColorDetector
+from edge.inference.vehicle_reid import VehicleReID
+from edge.inference.vehicle_fingerprint import VehicleFingerprintGenerator
 from edge.inference.scheduler import InferenceScheduler
 from edge.inference.events import EventPublisher
 from edge.inference.fusion import DetectionFusionEngine
@@ -160,9 +164,34 @@ class EdgeService:
         inf_config = self.config.get("inference", {})
 
         vehicle_det = VehicleDetector(inf_config.get("vehicle_detection", {}))
-        plate_det = PlateDetector(inf_config.get("plate_detection", {}))
-        ocr = PlateOCR(inf_config.get("ocr", {}))
-        classifier = VehicleClassifier(inf_config.get("classifier", {}))
+        plate_det   = PlateDetector(inf_config.get("plate_detection", {}))
+        ocr         = PlateOCR(inf_config.get("ocr", {}))
+
+        # Vehicle intelligence sub-models (all ONNX-based, graceful fallback)
+        models_dir      = str(BASE_DIR / "edge" / "models")
+        clf_cfg         = inf_config.get("classifier", {})
+        clf_model_cfg   = inf_config.get("vehicle_classifier", {
+            "model_path": f"{models_dir}/vehicle_make_model_classifier.onnx",
+        })
+        color_cfg       = inf_config.get("vehicle_color", {
+            "model_path": f"{models_dir}/vehicle_color_model.onnx",
+        })
+        reid_cfg        = inf_config.get("vehicle_reid", {
+            "model_path": f"{models_dir}/vehicle_embedding_model.onnx",
+        })
+
+        clf_model   = VehicleClassifierModel(clf_model_cfg)
+        color_det   = VehicleColorDetector(color_cfg)
+        reid_model  = VehicleReID(reid_cfg)
+        fp_gen      = VehicleFingerprintGenerator()
+
+        classifier = VehicleClassifier(
+            config=clf_cfg,
+            classifier_model=clf_model,
+            color_detector=color_det,
+            reid_model=reid_model,
+            fingerprint_gen=fp_gen,
+        )
 
         # Load models (non-fatal if models not present yet)
         models_loaded = True
