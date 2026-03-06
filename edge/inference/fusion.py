@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from edge.hotlist.matcher import HotlistMatcher
     from edge.evidence.capture import SnapshotCapture
     from edge.evidence.storage import EvidenceStorage
+    from edge.ranking.engine import RankingEngine
 
 logger = logging.getLogger(__name__)
 
@@ -61,15 +62,17 @@ class DetectionFusionEngine:
 
     def __init__(
         self,
-        event_publisher: "EventPublisher",
-        hotlist_matcher: "HotlistMatcher | None" = None,
+        event_publisher:  "EventPublisher",
+        hotlist_matcher:  "HotlistMatcher | None"  = None,
         snapshot_capture: "SnapshotCapture | None" = None,
         evidence_storage: "EvidenceStorage | None" = None,
+        ranking_engine:   "RankingEngine | None"   = None,
     ):
         self._publisher       = event_publisher
         self._hotlist         = hotlist_matcher
         self._snapshot        = snapshot_capture
         self._evidence        = evidence_storage
+        self._ranking         = ranking_engine
 
         # (camera_id, track_id) → list of Detection objects (plate_text reads)
         self._history: dict[tuple[str, int], list["Detection"]] = {}
@@ -98,6 +101,9 @@ class DetectionFusionEngine:
     def set_evidence_storage(self, storage: "EvidenceStorage"):
         self._evidence = storage
 
+    def set_ranking_engine(self, engine: "RankingEngine"):
+        self._ranking = engine
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -113,6 +119,11 @@ class DetectionFusionEngine:
         key = (detection.camera_id, detection.track_id)
         now = time.monotonic()
         self._last_seen[key] = now
+
+        # Feed ALL vehicle detections into the ranking engine cache,
+        # regardless of whether a plate was read.
+        if self._ranking is not None:
+            self._ranking.update_detection(detection)
 
         # Keep best evidence frame (highest plate confidence with a frame)
         if detection.frame is not None:
@@ -234,6 +245,12 @@ class DetectionFusionEngine:
                     camera_id=camera_id,
                     track_id=track_id,
                     bbox=best.bbox,
+                    make=best.make,
+                    model=best.model,
+                    color=best.color,
+                    year_range=best.year_range,
+                    latitude=best.latitude,
+                    longitude=best.longitude,
                 )
             except Exception:
                 logger.exception(
