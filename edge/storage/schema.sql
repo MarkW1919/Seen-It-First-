@@ -16,6 +16,9 @@ CREATE TABLE IF NOT EXISTS detections (
     bbox_x2         INTEGER,
     bbox_y2         INTEGER,
     snapshot_path   TEXT,
+    vehicle_path    TEXT,
+    plate_path      TEXT,
+    composite_path  TEXT,
     night_mode      INTEGER DEFAULT 0,
     created_at      TEXT    DEFAULT (datetime('now'))
 );

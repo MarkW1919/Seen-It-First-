@@ -59,6 +59,57 @@ class DetectionRepository:
         self.db.commit()
         return cursor.lastrowid
 
+    def save_evidence_detection(
+        self,
+        timestamp:        float,
+        camera_id:        str,
+        track_id:         int | None,
+        plate_text:       str,
+        plate_confidence: float,
+        vehicle_class:    str,
+        bbox:             tuple[int, int, int, int] = (0, 0, 0, 0),
+        vehicle_path:     str = "",
+        plate_path:       str = "",
+        composite_path:   str = "",
+        night_mode:       bool = False,
+    ) -> int:
+        """
+        Insert a confirmed-detection record that includes evidence image paths.
+
+        This method takes flat scalar args (no PipelineResult dependency) so
+        it can be called directly from the evidence storage layer.  Returns
+        the row ID of the inserted record.
+        """
+        cursor = self.db.execute(
+            """
+            INSERT INTO detections
+                (timestamp, camera_id, track_id, plate_text, plate_confidence,
+                 vehicle_class, vehicle_color, year_bucket,
+                 bbox_x1, bbox_y1, bbox_x2, bbox_y2,
+                 snapshot_path, vehicle_path, plate_path, composite_path,
+                 night_mode)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                timestamp,
+                camera_id,
+                track_id,
+                plate_text,
+                plate_confidence,
+                vehicle_class,
+                "",          # vehicle_color — not available at fusion stage
+                "",          # year_bucket
+                bbox[0], bbox[1], bbox[2], bbox[3],
+                composite_path,   # snapshot_path = composite for dashboard compat
+                vehicle_path,
+                plate_path,
+                composite_path,
+                1 if night_mode else 0,
+            ),
+        )
+        self.db.commit()
+        return cursor.lastrowid
+
     def save_alert(self, alert: HotlistAlert) -> int:
         """Insert a hotlist alert record. Returns the row ID."""
         cursor = self.db.execute(
