@@ -57,6 +57,7 @@ class EvidenceStorage:
         year_range:     str = "",
         latitude:       float = 0.0,
         longitude:      float = 0.0,
+        fingerprint:    str = "",
     ) -> int:
         """
         Insert a confirmed detection record into the database.
@@ -98,6 +99,7 @@ class EvidenceStorage:
                 confidence=confidence,
                 latitude=latitude,
                 longitude=longitude,
+                fingerprint=fingerprint,
             )
             logger.debug(
                 "Evidence stored: row=%d plate=%s cam=%s vehicle=%s",

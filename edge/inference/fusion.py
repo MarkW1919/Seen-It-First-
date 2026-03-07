@@ -28,6 +28,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from edge.inference.vehicle_fingerprint import FingerprintDeduplicator
+
 if TYPE_CHECKING:
     from edge.inference.pipeline import Detection
     from edge.inference.events import EventPublisher
@@ -88,6 +90,9 @@ class DetectionFusionEngine:
 
         self._last_eviction = time.monotonic()
 
+        # Fingerprint-based deduplication (5 s / 10 ft window)
+        self._fp_dedup = FingerprintDeduplicator()
+
     # ------------------------------------------------------------------
     # Wiring setters (called after construction to avoid circular imports)
     # ------------------------------------------------------------------
@@ -119,6 +124,17 @@ class DetectionFusionEngine:
         key = (detection.camera_id, detection.track_id)
         now = time.monotonic()
         self._last_seen[key] = now
+
+        # Fingerprint-based deduplication — suppress duplicate vehicle events
+        # that appear within 5 s and 10 ft (e.g. same vehicle seen by two cameras).
+        if self._fp_dedup.is_duplicate(
+            detection.fingerprint, detection.timestamp,
+            detection.latitude, detection.longitude,
+        ):
+            # Still update the ranking cache with the latest position/confidence
+            if self._ranking is not None:
+                self._ranking.update_detection(detection)
+            return
 
         # Feed ALL vehicle detections into the ranking engine cache,
         # regardless of whether a plate was read.
@@ -251,6 +267,7 @@ class DetectionFusionEngine:
                     year_range=best.year_range,
                     latitude=best.latitude,
                     longitude=best.longitude,
+                    fingerprint=best.fingerprint,
                 )
             except Exception:
                 logger.exception(
@@ -264,6 +281,11 @@ class DetectionFusionEngine:
             "camera_id":      camera_id,
             "bbox":           best.bbox,
             "vehicle_class":  best.vehicle_class,
+            "make":           best.make,
+            "model":          best.model,
+            "color":          best.color,
+            "year_range":     best.year_range,
+            "fingerprint":    best.fingerprint,
             "vehicle_conf":   best.vehicle_conf,
             "plate_text":     best_text,
             "plate_conf":     best.plate_conf,

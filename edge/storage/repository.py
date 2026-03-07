@@ -79,10 +79,11 @@ class DetectionRepository:
         confidence:       float = 0.0,
         latitude:         float = 0.0,
         longitude:        float = 0.0,
+        fingerprint:      str = "",
     ) -> int:
         """
-        Insert a confirmed-detection record that includes evidence image paths
-        and full vehicle intelligence fields.
+        Insert a confirmed-detection record that includes evidence image paths,
+        full vehicle intelligence fields, and a vehicle fingerprint.
 
         Takes flat scalar args (no PipelineResult dependency) so it can be
         called directly from the evidence storage layer.  Returns the row ID.
@@ -93,10 +94,11 @@ class DetectionRepository:
                 (timestamp, camera_id, track_id, plate_text, plate_confidence,
                  vehicle_class, vehicle_color, year_bucket,
                  make, model, year_range, confidence, latitude, longitude,
+                 fingerprint,
                  bbox_x1, bbox_y1, bbox_x2, bbox_y2,
                  snapshot_path, vehicle_path, plate_path, composite_path,
                  night_mode)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 timestamp,
@@ -113,6 +115,7 @@ class DetectionRepository:
                 confidence,
                 latitude,
                 longitude,
+                fingerprint,
                 bbox[0], bbox[1], bbox[2], bbox[3],
                 composite_path,   # snapshot_path = composite for dashboard compat
                 vehicle_path,

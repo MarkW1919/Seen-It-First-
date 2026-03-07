@@ -23,6 +23,7 @@ class RankedVehicle:
     longitude:    float
     timestamp:    float
     camera_id:    str
+    fingerprint:  str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -41,4 +42,5 @@ class RankedVehicle:
             "longitude":    self.longitude,
             "timestamp":    self.timestamp,
             "camera_id":    self.camera_id,
+            "fingerprint":  self.fingerprint,
         }

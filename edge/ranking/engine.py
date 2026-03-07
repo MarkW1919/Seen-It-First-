@@ -136,6 +136,7 @@ class RankingEngine:
                 longitude=det.longitude,
                 timestamp=det.timestamp,
                 camera_id=cam_id,
+                fingerprint=getattr(det, "fingerprint", ""),
             ))
 
         results.sort(key=lambda v: v.score, reverse=True)
