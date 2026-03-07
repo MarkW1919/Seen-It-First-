@@ -49,6 +49,7 @@ export interface RankedVehicle {
   longitude:     number;
   timestamp:     number;
   camera_id:     string;
+  fingerprint:   string;
 }
 
 /** WebSocket event payloads */
