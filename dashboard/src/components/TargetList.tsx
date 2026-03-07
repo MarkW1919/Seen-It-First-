@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { RankedVehicle } from "../types/navigation";
+import type { RankedVehicle } from "../types/navigation";
 import { VehicleDetectionCard } from "./VehicleDetectionCard";
 
 const API_BASE = "http://localhost:8080";
@@ -51,42 +51,55 @@ export function TargetList({ scanning }: Props) {
   if (!scanning) return null;
 
   return (
-    <div className="space-y-4">
+    <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
       {/* Scanning header */}
-      <div className="text-center py-3 bg-blue-900/40 border border-blue-700 rounded-xl">
-        <p className="text-blue-300 font-semibold text-sm tracking-wide uppercase">
+      <div style={{
+        textAlign: "center",
+        padding: "0.75rem",
+        background: "rgba(30, 58, 138, 0.4)",
+        border: "1px solid #1d4ed8",
+        borderRadius: "12px",
+      }}>
+        <p style={{
+          color: "#93c5fd",
+          fontWeight: 600,
+          fontSize: "0.8rem",
+          letterSpacing: "0.08em",
+          textTransform: "uppercase",
+          margin: 0,
+        }}>
           Scanning Vehicles at Destination
         </p>
       </div>
 
       {/* Section title */}
-      <h2 className="text-white font-bold text-lg">
+      <h2 style={{ color: "#fff", fontWeight: 700, fontSize: "1rem", margin: 0 }}>
         Potential Target Vehicles
       </h2>
 
       {/* Loading state */}
       {loading && vehicles.length === 0 && (
-        <p className="text-gray-400 text-sm text-center py-4">
+        <p style={{ color: "#94a3b8", fontSize: "0.8rem", textAlign: "center", padding: "1rem 0", margin: 0 }}>
           Searching for vehicles…
         </p>
       )}
 
       {/* Error */}
       {error && (
-        <p className="text-red-400 text-sm text-center py-2">
+        <p style={{ color: "#f87171", fontSize: "0.8rem", textAlign: "center", padding: "0.5rem 0", margin: 0 }}>
           Error: {error}
         </p>
       )}
 
       {/* No results */}
       {!loading && !error && vehicles.length === 0 && (
-        <p className="text-gray-500 text-sm text-center py-4">
+        <p style={{ color: "#64748b", fontSize: "0.8rem", textAlign: "center", padding: "1rem 0", margin: 0 }}>
           No vehicles detected within range.
         </p>
       )}
 
       {/* Vehicle cards — top vehicle highlighted in red */}
-      <div className="space-y-3">
+      <div style={{ display: "flex", flexDirection: "column", gap: "0.625rem" }}>
         {vehicles.map((v, idx) => (
           <VehicleDetectionCard
             key={v.vehicle_id}
@@ -97,7 +110,7 @@ export function TargetList({ scanning }: Props) {
       </div>
 
       {vehicles.length > 0 && (
-        <p className="text-gray-600 text-xs text-center">
+        <p style={{ color: "#475569", fontSize: "0.7rem", textAlign: "center", margin: 0 }}>
           Showing {vehicles.length} vehicle{vehicles.length !== 1 ? "s" : ""} · refreshes every 3 s
         </p>
       )}

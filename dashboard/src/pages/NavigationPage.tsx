@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MapContainer, TileLayer, Marker, Polyline, Popup, useMap } from "react-leaflet";
 import { icon, LatLngTuple } from "leaflet";
 import { useWebSocket } from "../hooks/useWebSocket";
+import { TargetList } from "../components/TargetList";
 import type {
   GeocodeResponse,
   RouteResponse,
@@ -156,7 +157,7 @@ export default function NavigationPage() {
   // becomes false (navigation stopped or ARRIVED received).
   // ------------------------------------------------------------------
   useEffect(() => {
-    if (!navigating) return;
+    if (!navigating && !arrived) return;
 
     const interval = setInterval(() => {
       const pos = currentPosRef.current;
@@ -166,7 +167,7 @@ export default function NavigationPage() {
     }, GPS_POST_INTERVAL_MS);
 
     return () => clearInterval(interval);
-  }, [navigating]);
+  }, [navigating, arrived]);
 
   // ------------------------------------------------------------------
   // Geocode mutation
@@ -401,6 +402,9 @@ export default function NavigationPage() {
           {errorMsg && (
             <div style={styles.errorBox}>⚠ {errorMsg}</div>
           )}
+
+          {/* Vehicle detection cards — visible after ARRIVED */}
+          <TargetList scanning={arrived} />
         </aside>
 
         {/* ── Map ───────────────────────────────────────────────── */}
