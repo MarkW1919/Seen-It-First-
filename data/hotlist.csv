@@ -1,0 +1,12 @@
+# Seen-It-First Hotlist — License plates to flag on detection
+# Format: plate_number,reason,priority
+# Priority values: high, medium, normal
+# Lines starting with # are ignored.
+#
+# Example entries (remove the # to activate):
+# ABC1234,stolen_vehicle,high
+# XYZ5678,wanted_suspect,high
+# 7ABC123,expired_registration,normal
+#
+# Live hotlist updates: edit this file while the service runs.
+# The system checks for changes every ~500 detection cycles.

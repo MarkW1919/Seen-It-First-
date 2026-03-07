@@ -73,6 +73,25 @@ inference:
     pretrained: true  # ImageNet pretrained YOLOv8n-cls, no custom training needed
     # Budget: ~15 MB VRAM
 
+  # ONNX sub-models for vehicle intelligence (all optional — graceful fallback)
+  # Place downloaded .onnx files in edge/models/ before running.
+  vehicle_classifier:
+    model_path: "edge/models/vehicle_make_model_classifier.onnx"
+    label_path: "edge/models/vehicle_make_model_labels.json"
+    input_size: 224
+    confidence_threshold: 0.50
+
+  vehicle_color:
+    model_path: "edge/models/vehicle_color_model.onnx"
+    input_size: 224
+    # Falls back to HSV histogram when model file is absent
+
+  vehicle_reid:
+    model_path: "edge/models/vehicle_embedding_model.onnx"
+    input_size: 128
+    embedding_dim: 128
+    # Falls back to text-only fingerprint hash when model file is absent
+
   tracker:
     max_age: 30          # frames before track deletion
     min_hits: 3          # detections before track confirmed

@@ -238,7 +238,7 @@ class InferencePipeline:
                 camera_id=cam_id,
                 bbox=track.bbox.tolist(),
                 vehicle_class=track.class_name or (clf.vehicle_type if clf else "vehicle"),
-                vehicle_conf=float(track.bbox[4]) if len(track.bbox) > 4 else 0.0,
+                vehicle_conf=track.confidence,
                 plate_text=track.plate_text or "",
                 plate_conf=track.plate_confidence,
                 timestamp=packet.timestamp,

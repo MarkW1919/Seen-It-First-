@@ -32,11 +32,13 @@ models/**/*.pt
 *.log
 logs/
 
-# Database
+# Database and runtime data (generated at runtime)
 *.db
 *.sqlite
 *.sqlite3
-data/
+# Ignore all runtime data files but allow the hotlist template to be tracked
+data/*
+!data/hotlist.csv
 
 # Snapshots / captures
 snapshots/

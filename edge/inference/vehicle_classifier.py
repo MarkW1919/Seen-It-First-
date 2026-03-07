@@ -66,6 +66,7 @@ class VehicleClassifierModel:
 
     def __init__(self, config: dict):
         self.model_path   = config.get("model_path", "")
+        self.label_path   = config.get("label_path", "")
         self.input_size   = config.get("input_size", 224)
         self.engine       = OnnxEngine(self.model_path)
         self._labels: dict[int, dict] = {}
@@ -78,7 +79,11 @@ class VehicleClassifierModel:
         return True
 
     def _load_labels(self):
-        label_path = Path(self.model_path).parent / "vehicle_make_model_labels.json"
+        # Use configured label_path; fall back to sibling of model file
+        if self.label_path:
+            label_path = Path(self.label_path)
+        else:
+            label_path = Path(self.model_path).parent / "vehicle_make_model_labels.json"
         if not label_path.exists():
             logger.warning("Label map not found: %s — classification will return unknown", label_path)
             return

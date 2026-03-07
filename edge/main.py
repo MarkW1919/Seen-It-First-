@@ -141,6 +141,11 @@ class EdgeService:
         """Initialize all components."""
         logger.info("Initializing Seen-It-First Edge Service")
 
+        # Ensure required data directories exist before anything tries to open them
+        for subdir in ("", "evidence", "snapshots"):
+            d = BASE_DIR / "data" / subdir if subdir else BASE_DIR / "data"
+            d.mkdir(parents=True, exist_ok=True)
+
         # Database
         db_path = str(BASE_DIR / self.config["system"]["database_path"])
         self.db = Database(db_path)
@@ -168,17 +173,20 @@ class EdgeService:
         ocr         = PlateOCR(inf_config.get("ocr", {}))
 
         # Vehicle intelligence sub-models (all ONNX-based, graceful fallback)
+        # Paths come from system.yaml [inference.vehicle_classifier/color/reid].
+        # Hardcoded defaults used only when the config section is absent entirely.
         models_dir      = str(BASE_DIR / "edge" / "models")
         clf_cfg         = inf_config.get("classifier", {})
-        clf_model_cfg   = inf_config.get("vehicle_classifier", {
+        clf_model_cfg   = inf_config.get("vehicle_classifier") or {
             "model_path": f"{models_dir}/vehicle_make_model_classifier.onnx",
-        })
-        color_cfg       = inf_config.get("vehicle_color", {
+            "label_path": f"{models_dir}/vehicle_make_model_labels.json",
+        }
+        color_cfg       = inf_config.get("vehicle_color") or {
             "model_path": f"{models_dir}/vehicle_color_model.onnx",
-        })
-        reid_cfg        = inf_config.get("vehicle_reid", {
+        }
+        reid_cfg        = inf_config.get("vehicle_reid") or {
             "model_path": f"{models_dir}/vehicle_embedding_model.onnx",
-        })
+        }
 
         clf_model   = VehicleClassifierModel(clf_model_cfg)
         color_det   = VehicleColorDetector(color_cfg)
@@ -238,13 +246,25 @@ class EdgeService:
         )
         self.evidence_storage = EvidenceStorage(self.repo)
 
-        # Detection fusion engine
+        # Detection fusion engine.
+        # alert_callback fires on every confirmed hotlist match so that
+        # console/audio alerts (AlertManager) and DB persistence (repo) happen
+        # from the fusion engine rather than the now-removed loop code.
+        # AlertManager is created later in this method; use a closure so the
+        # lambda always sees the final self.alert_manager reference.
+        def _on_alert(alert):
+            if self.alert_manager is not None:
+                self.alert_manager.fire_alert(alert)
+            if self.repo is not None:
+                self.repo.save_alert(alert)
+
         self.fusion_engine = DetectionFusionEngine(
             event_publisher=self.event_publisher,
             hotlist_matcher=self.hotlist_matcher,
             snapshot_capture=self.snapshot_capture,
             evidence_storage=self.evidence_storage,
             ranking_engine=self.ranking_engine,
+            alert_callback=_on_alert,
         )
 
         # Scheduler
@@ -373,41 +393,22 @@ class EdgeService:
                     f"throttle_level_{throttle_level}_fps_{target_fps}",
                 )
 
-            # Process frames from all cameras
+            # Process frames from all cameras.
+            # The InferencePipeline (inside the scheduler) feeds every confirmed
+            # detection into DetectionFusionEngine, which handles:
+            #   • multi-frame plate confirmation
+            #   • evidence capture (snapshot JPEG)
+            #   • DB persistence via EvidenceStorage
+            #   • hotlist matching + alert_callback (AlertManager + repo.save_alert)
+            #   • ranking engine cache update
+            #   • WebSocket broadcast via EventPublisher
+            # Nothing else needs to happen here after process_frame().
             frames = self.camera_manager.get_latest_frames()
 
             for cam_id, packet in frames.items():
                 if packet is None:
                     continue
-
-                result = self.scheduler.process_frame(packet)
-                if result is None:
-                    continue  # frame skipped (rate limiting)
-
-                # Save detections with plate info
-                for ocr_result in result.ocr_results:
-                    plate = ocr_result.plate_detection
-                    vehicle = plate.vehicle_box
-                    classification = result.classifications.get(None)
-
-                    self.repo.save_detection(
-                        result,
-                        plate_text=ocr_result.text,
-                        plate_confidence=ocr_result.confidence,
-                        vehicle_class=vehicle.class_name,
-                        vehicle_color=classification.color if classification else "",
-                        year_bucket=classification.year_bucket if classification else "",
-                        bbox=(vehicle.x1, vehicle.y1, vehicle.x2, vehicle.y2),
-                    )
-
-                # Hotlist check
-                if result.ocr_results:
-                    alerts = self.hotlist_matcher.check(
-                        result.ocr_results, cam_id,
-                    )
-                    for alert in alerts:
-                        self.repo.save_alert(alert)
-                        self.alert_manager.fire_alert(alert)
+                self.scheduler.process_frame(packet)
 
             # Periodic hotlist reload check
             if self._loop_count % 500 == 0:

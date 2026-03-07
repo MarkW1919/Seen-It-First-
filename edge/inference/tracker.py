@@ -28,6 +28,7 @@ class Track:
     plate_text: str = ""
     plate_confidence: float = 0.0
     class_name: str = ""
+    confidence: float = 0.0   # detection confidence from the originating YOLO box
     metadata: dict = field(default_factory=dict)
 
 
@@ -78,6 +79,7 @@ class Tracker:
             return self.confirmed_tracks
 
         det_boxes = np.array([d[:4] for d in detections])
+        det_confs = [float(d[4]) if len(d) > 4 else 0.0 for d in detections]
         det_embeddings = embeddings if embeddings else [None] * len(detections)
 
         # Build cost matrix using IoU
@@ -106,6 +108,7 @@ class Tracker:
         for track_idx, det_idx in matched:
             track = self.tracks[track_idx]
             track.bbox = det_boxes[det_idx]
+            track.confidence = det_confs[det_idx]
             track.hits += 1
             track.time_since_update = 0
             if det_embeddings[det_idx] is not None:
@@ -118,6 +121,7 @@ class Tracker:
             new_track = Track(
                 track_id=self._next_id,
                 bbox=det_boxes[det_idx],
+                confidence=det_confs[det_idx],
                 embedding=det_embeddings[det_idx],
             )
             self._next_id += 1

@@ -24,7 +24,7 @@ import re
 import time
 from collections import Counter
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 import numpy as np
 
@@ -33,7 +33,7 @@ from edge.inference.vehicle_fingerprint import FingerprintDeduplicator
 if TYPE_CHECKING:
     from edge.inference.pipeline import Detection
     from edge.inference.events import EventPublisher
-    from edge.hotlist.matcher import HotlistMatcher
+    from edge.hotlist.matcher import HotlistMatcher, HotlistAlert
     from edge.evidence.capture import SnapshotCapture
     from edge.evidence.storage import EvidenceStorage
     from edge.ranking.engine import RankingEngine
@@ -69,12 +69,15 @@ class DetectionFusionEngine:
         snapshot_capture: "SnapshotCapture | None" = None,
         evidence_storage: "EvidenceStorage | None" = None,
         ranking_engine:   "RankingEngine | None"   = None,
+        alert_callback:   "Callable[[HotlistAlert], None] | None" = None,
     ):
         self._publisher       = event_publisher
         self._hotlist         = hotlist_matcher
         self._snapshot        = snapshot_capture
         self._evidence        = evidence_storage
         self._ranking         = ranking_engine
+        # Called for every confirmed hotlist match (console alert, DB save, etc.)
+        self._alert_callback  = alert_callback
 
         # (camera_id, track_id) → list of Detection objects (plate_text reads)
         self._history: dict[tuple[str, int], list["Detection"]] = {}
@@ -314,6 +317,12 @@ class DetectionFusionEngine:
                     "priority":      alert.priority,
                     "track_id":      track_id,
                 })
+                # Side effects: console/audio alert + DB persistence
+                if self._alert_callback is not None:
+                    try:
+                        self._alert_callback(alert)
+                    except Exception:
+                        logger.exception("alert_callback raised for plate=%s", alert.plate)
 
     # ------------------------------------------------------------------
     # Memory management
