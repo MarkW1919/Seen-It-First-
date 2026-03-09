@@ -1,13 +1,13 @@
-import React, { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import type { RankedVehicle } from "../types/navigation";
 import { VehicleDetectionCard } from "./VehicleDetectionCard";
 
-const API_BASE = "http://localhost:8080";
 const REFRESH_INTERVAL_MS = 3000;
 const MAX_TARGETS = 10;
 
 interface TargetsResponse {
   targets: RankedVehicle[];
+  error?: string;
 }
 
 interface Props {
@@ -19,33 +19,61 @@ export function TargetList({ scanning }: Props) {
   const [vehicles, setVehicles] = useState<RankedVehicle[]>([]);
   const [error, setError]       = useState<string | null>(null);
   const [loading, setLoading]   = useState(false);
+  const mountedRef = useRef(true);
+  const inFlightRef = useRef(false);
 
-  const fetchTargets = useCallback(async () => {
+  const fetchTargets = useCallback(async (signal?: AbortSignal) => {
+    if (inFlightRef.current) return;
+
+    inFlightRef.current = true;
     try {
-      const res = await fetch(`${API_BASE}/navigation/targets`);
+      const res = await fetch("/navigation/targets", { signal });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: TargetsResponse = await res.json();
+      if (!mountedRef.current) return;
+
       setVehicles(data.targets.slice(0, MAX_TARGETS));
-      setError(null);
+      setError(data.error ?? null);
     } catch (err) {
+      if (signal?.aborted || !mountedRef.current) return;
       setError(err instanceof Error ? err.message : "Fetch failed");
     } finally {
-      setLoading(false);
+      inFlightRef.current = false;
+      if (mountedRef.current) {
+        setLoading(false);
+      }
     }
+  }, []);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
   }, []);
 
   // Poll every 3 seconds while scanning
   useEffect(() => {
     if (!scanning) {
       setVehicles([]);
+      setError(null);
+      setLoading(false);
+      inFlightRef.current = false;
       return;
     }
 
+    const controller = new AbortController();
     setLoading(true);
-    fetchTargets();
+    void fetchTargets(controller.signal);
 
-    const interval = setInterval(fetchTargets, REFRESH_INTERVAL_MS);
-    return () => clearInterval(interval);
+    const interval = setInterval(() => {
+      void fetchTargets(controller.signal);
+    }, REFRESH_INTERVAL_MS);
+
+    return () => {
+      controller.abort();
+      clearInterval(interval);
+    };
   }, [scanning, fetchTargets]);
 
   if (!scanning) return null;
