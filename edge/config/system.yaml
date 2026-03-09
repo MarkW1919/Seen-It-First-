@@ -126,5 +126,10 @@ navigation:
   geocode_cache_path: "data/geocode_cache.json"
 
 api:
-  host: "0.0.0.0"
+  host: "127.0.0.1"
   port: 8080
+  # Optional shared secret for /navigation/* and /ws (empty disables auth)
+  auth_token: ""
+  # Restrict browser origins for dashboard/API calls
+  allowed_origins:
+    - "http://localhost:5173"

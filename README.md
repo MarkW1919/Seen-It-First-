@@ -86,7 +86,8 @@ edge/
 ├── config/          # system.yaml
 └── main.py          # Service entry point
 
-models/              # TensorRT engine files (not in git)
+models/              # Runtime TensorRT/ONNX artifacts (generated locally)
+edge/models/         # Tracked documentation for expected model files
 systemd/             # systemd service file
 edge/ai_training_phase3/  # Phase 3 fine-tuning (not required for Phase 1)
 docs/                # Build rules and documentation
@@ -116,6 +117,12 @@ nano edge/camera/config.yaml
 # Run
 python -m edge.main
 ```
+
+### API Security Defaults
+
+- API binds to `127.0.0.1:8080` by default for single-user/local deployments.
+- To require auth on `/navigation/*` and `/ws`, set `api.auth_token` in `edge/config/system.yaml` and pass `X-API-Key` (or `Authorization: Bearer <token>`).
+- If you expose the API on LAN (`0.0.0.0`), also restrict `api.allowed_origins` and use firewall rules.
 
 ## Production Deployment
 
