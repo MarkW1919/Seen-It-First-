@@ -1,8 +1,8 @@
-import React, { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback } from "react";
 import type { RankedVehicle } from "../types/navigation";
 import { VehicleDetectionCard } from "./VehicleDetectionCard";
 
-const API_BASE = "http://localhost:8080";
+const TARGETS_ENDPOINT = "/navigation/targets";
 const REFRESH_INTERVAL_MS = 3000;
 const MAX_TARGETS = 10;
 
@@ -20,14 +20,15 @@ export function TargetList({ scanning }: Props) {
   const [error, setError]       = useState<string | null>(null);
   const [loading, setLoading]   = useState(false);
 
-  const fetchTargets = useCallback(async () => {
+  const fetchTargets = useCallback(async (signal?: AbortSignal) => {
     try {
-      const res = await fetch(`${API_BASE}/navigation/targets`);
+      const res = await fetch(TARGETS_ENDPOINT, { signal });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: TargetsResponse = await res.json();
       setVehicles(data.targets.slice(0, MAX_TARGETS));
       setError(null);
     } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
       setError(err instanceof Error ? err.message : "Fetch failed");
     } finally {
       setLoading(false);
@@ -38,14 +39,23 @@ export function TargetList({ scanning }: Props) {
   useEffect(() => {
     if (!scanning) {
       setVehicles([]);
+      setError(null);
+      setLoading(false);
       return;
     }
 
     setLoading(true);
-    fetchTargets();
+    const abortController = new AbortController();
+    fetchTargets(abortController.signal);
 
-    const interval = setInterval(fetchTargets, REFRESH_INTERVAL_MS);
-    return () => clearInterval(interval);
+    const interval = setInterval(() => {
+      fetchTargets();
+    }, REFRESH_INTERVAL_MS);
+
+    return () => {
+      abortController.abort();
+      clearInterval(interval);
+    };
   }, [scanning, fetchTargets]);
 
   if (!scanning) return null;

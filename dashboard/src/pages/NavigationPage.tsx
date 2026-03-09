@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MapContainer, TileLayer, Marker, Polyline, Popup, useMap } from "react-leaflet";
 import { icon, LatLngTuple } from "leaflet";
@@ -157,7 +157,7 @@ export default function NavigationPage() {
   // becomes false (navigation stopped or ARRIVED received).
   // ------------------------------------------------------------------
   useEffect(() => {
-    if (!navigating && !arrived) return;
+    if (!navigating) return;
 
     const interval = setInterval(() => {
       const pos = currentPosRef.current;
