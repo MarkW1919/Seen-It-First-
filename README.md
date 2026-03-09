@@ -104,17 +104,20 @@ source venv/bin/activate
 # Install dependencies
 pip install -r requirements.txt
 
-# Create data directory
-mkdir -p data logs
-
-# (Optional) Create hotlist
-echo "ABC1234,stolen,high" > data/hotlist.csv
+# Create runtime directories/files
+python scripts/bootstrap_runtime.py
 
 # Edit camera config
 nano edge/camera/config.yaml
 
+# Validate config files
+python scripts/validate_config.py
+
 # Run
 python -m edge.main
+
+# Optional: run preflight to see remaining blockers
+python scripts/preflight_check.py
 ```
 
 ## Production Deployment
