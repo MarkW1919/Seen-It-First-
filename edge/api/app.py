@@ -201,6 +201,9 @@ def create_app(
 
     @app.middleware("http")
     async def auth_middleware(request: Request, call_next):
+        if request.method == "OPTIONS":
+            return await call_next(request)
+
         if api_token and _is_protected_path(request.url.path):
             header_key, bearer, _ = _extract_auth_credentials(
                 x_api_key=request.headers.get("x-api-key"),

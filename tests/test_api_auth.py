@@ -92,6 +92,18 @@ class TestApiAuthMiddleware(unittest.TestCase):
             )
             self.assertEqual(with_bearer.status_code, 200)
 
+
+    def test_options_preflight_skips_auth_when_token_enabled(self):
+        with self._client("secret-token") as client:
+            response = client.options(
+                "/navigation/status",
+                headers={
+                    "Origin": "http://localhost:5173",
+                    "Access-Control-Request-Method": "GET",
+                },
+            )
+            self.assertEqual(response.status_code, 200)
+
     def test_navigation_route_open_when_token_disabled(self):
         with self._client("") as client:
             response = client.get("/navigation/status")
