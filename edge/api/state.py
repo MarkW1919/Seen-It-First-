@@ -7,6 +7,7 @@ app.py (which mounts the navigation router) and navigation.py
 """
 
 from typing import TYPE_CHECKING, Any
+import threading
 
 from edge.navigation.geocoder import Geocoder
 from edge.navigation.router import Router
@@ -23,28 +24,32 @@ class GpsState:
 
     Written by the navigation GPS endpoint (uvicorn thread) and read by
     the inference pipeline (inference thread) when building Detection
-    objects.  CPython's GIL makes float attribute writes atomic, so no
-    explicit lock is needed.
+    objects. A small lock keeps the lat/lon pair consistent across reads.
     """
 
     def __init__(self):
         self._lat: float = 0.0
         self._lon: float = 0.0
+        self._lock = threading.Lock()
 
     def update(self, lat: float, lon: float):
-        self._lat = lat
-        self._lon = lon
+        with self._lock:
+            self._lat = lat
+            self._lon = lon
 
     def get(self) -> tuple[float, float]:
-        return self._lat, self._lon
+        with self._lock:
+            return self._lat, self._lon
 
     @property
     def lat(self) -> float:
-        return self._lat
+        with self._lock:
+            return self._lat
 
     @property
     def lon(self) -> float:
-        return self._lon
+        with self._lock:
+            return self._lon
 
 
 class NavigationState:
