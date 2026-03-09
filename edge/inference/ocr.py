@@ -246,18 +246,19 @@ class PlateOCR:
             return text
 
         chars = list(text)
+        source_chars = list(text)
         digit_like = {"O": "0", "I": "1", "Z": "2", "S": "5", "B": "8"}
         alpha_like = {"0": "O", "1": "I", "2": "Z", "5": "S", "8": "B"}
 
-        for idx, ch in enumerate(chars):
-            prev_c = chars[idx - 1] if idx > 0 else ""
-            next_c = chars[idx + 1] if idx < len(chars) - 1 else ""
+        for idx, ch in enumerate(source_chars):
+            prev_c = source_chars[idx - 1] if idx > 0 else ""
+            next_c = source_chars[idx + 1] if idx < len(source_chars) - 1 else ""
             neighbor_digits = sum([prev_c.isdigit(), next_c.isdigit()])
             neighbor_alpha = sum([prev_c.isalpha(), next_c.isalpha()])
 
-            if ch in digit_like and neighbor_digits > neighbor_alpha:
+            if ch in digit_like and neighbor_digits == 2:
                 chars[idx] = digit_like[ch]
-            elif ch in alpha_like and neighbor_alpha > neighbor_digits:
+            elif ch in alpha_like and neighbor_alpha == 2:
                 chars[idx] = alpha_like[ch]
 
         return "".join(chars)

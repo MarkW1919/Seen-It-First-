@@ -23,6 +23,11 @@ class TestPlateOCRPostprocess(unittest.TestCase):
         corrected = self.ocr._resolve_ambiguities("AB0DE")
         self.assertEqual(corrected, "ABODE")
 
+    def test_resolve_ambiguities_uses_original_neighbor_context(self):
+        corrected = self.ocr._resolve_ambiguities("1S3")
+        self.assertEqual(corrected, "153")
+
+
 
 if __name__ == "__main__":
     unittest.main()
