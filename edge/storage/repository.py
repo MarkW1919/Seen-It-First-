@@ -4,13 +4,15 @@ Data repository: insert and query detections, alerts, and system events.
 
 import logging
 import time
-from typing import Optional
 
 from edge.storage.database import Database
 from edge.inference.scheduler import PipelineResult
 from edge.hotlist.matcher import HotlistAlert
 
 logger = logging.getLogger(__name__)
+
+_MIN_QUERY_LIMIT = 1
+_MAX_QUERY_LIMIT = 1000
 
 
 class DetectionRepository:
@@ -46,7 +48,7 @@ class DetectionRepository:
                 result.timestamp,
                 result.camera_id,
                 None,
-                plate_text,
+                (plate_text or "").strip().upper(),
                 plate_confidence,
                 vehicle_class,
                 vehicle_color,
@@ -104,7 +106,7 @@ class DetectionRepository:
                 timestamp,
                 camera_id,
                 track_id,
-                plate_text,
+                (plate_text or "").strip().upper(),
                 plate_confidence,
                 vehicle_class,
                 color,        # vehicle_color
@@ -138,7 +140,7 @@ class DetectionRepository:
             """,
             (
                 alert.timestamp,
-                alert.plate,
+                (alert.plate or "").strip().upper(),
                 alert.reason,
                 alert.priority,
                 alert.confidence,
@@ -187,23 +189,29 @@ class DetectionRepository:
         self.db.commit()
 
     def get_recent_detections(self, limit: int = 100) -> list[dict]:
+        query_limit = self._sanitize_limit(limit, default=100)
         cursor = self.db.execute(
             "SELECT * FROM detections ORDER BY timestamp DESC LIMIT ?",
-            (limit,),
+            (query_limit,),
         )
         return [dict(row) for row in cursor.fetchall()]
 
     def get_recent_alerts(self, limit: int = 50) -> list[dict]:
+        query_limit = self._sanitize_limit(limit, default=50)
         cursor = self.db.execute(
             "SELECT * FROM hotlist_alerts ORDER BY timestamp DESC LIMIT ?",
-            (limit,),
+            (query_limit,),
         )
         return [dict(row) for row in cursor.fetchall()]
 
     def search_plate(self, plate_text: str) -> list[dict]:
+        normalized_plate = (plate_text or "").upper().strip()
+        if not normalized_plate:
+            return []
+
         cursor = self.db.execute(
             "SELECT * FROM detections WHERE plate_text = ? ORDER BY timestamp DESC",
-            (plate_text.upper().strip(),),
+            (normalized_plate,),
         )
         return [dict(row) for row in cursor.fetchall()]
 
@@ -217,6 +225,10 @@ class DetectionRepository:
 
     def prune_old_detections(self, max_rows: int = 1000000):
         """Delete oldest detections if count exceeds max."""
+        if max_rows <= 0:
+            logger.warning("prune_old_detections ignored invalid max_rows=%s", max_rows)
+            return
+
         count = self.get_detection_count()
         if count > max_rows:
             delete_count = count - max_rows
@@ -230,3 +242,11 @@ class DetectionRepository:
             )
             self.db.commit()
             logger.info("Pruned %d old detections", delete_count)
+
+    def _sanitize_limit(self, limit: int, default: int) -> int:
+        """Clamp query limits to a safe range to avoid invalid/extreme queries."""
+        if limit < _MIN_QUERY_LIMIT:
+            return default
+        if limit > _MAX_QUERY_LIMIT:
+            return _MAX_QUERY_LIMIT
+        return limit

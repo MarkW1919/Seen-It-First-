@@ -37,7 +37,7 @@ class VehicleReID:
 
     Usage::
 
-        reid = VehicleReID({"model_path": "edge/models/vehicle_embedding_model.onnx"})
+        reid = VehicleReID({"model_path": "models/onnx/vehicle_embedding_model.onnx"})
         reid.load()
         vec = reid.embed(vehicle_crop)   # np.ndarray shape (128,) or None
     """

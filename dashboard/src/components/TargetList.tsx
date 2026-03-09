@@ -1,13 +1,13 @@
-import React, { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback } from "react";
 import type { RankedVehicle } from "../types/navigation";
 import { VehicleDetectionCard } from "./VehicleDetectionCard";
 
-const API_BASE = "http://localhost:8080";
 const REFRESH_INTERVAL_MS = 3000;
 const MAX_TARGETS = 10;
 
 interface TargetsResponse {
   targets: RankedVehicle[];
+  error?: string;
 }
 
 interface Props {
@@ -22,11 +22,11 @@ export function TargetList({ scanning }: Props) {
 
   const fetchTargets = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/navigation/targets`);
+      const res = await fetch("/navigation/targets");
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: TargetsResponse = await res.json();
-      setVehicles(data.targets.slice(0, MAX_TARGETS));
-      setError(null);
+      setVehicles((data.targets ?? []).slice(0, MAX_TARGETS));
+      setError(data.error ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Fetch failed");
     } finally {

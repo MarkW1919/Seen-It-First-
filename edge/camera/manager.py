@@ -46,7 +46,7 @@ class CameraManager:
 
     def __init__(self, config_path: str, queue_size: int = 5):
         self.config_path = Path(config_path)
-        self.queue_size = queue_size
+        self.queue_size = max(1, int(queue_size))
         self.cameras: dict[str, CameraCapture] = {}
 
         # Sliding-window frame counters for manager-level FPS
@@ -65,19 +65,33 @@ class CameraManager:
             logger.error("Camera config not found: %s", self.config_path)
             return
 
-        with open(self.config_path, "r") as f:
-            raw = yaml.safe_load(f)
+        try:
+            with open(self.config_path, "r", encoding="utf-8") as f:
+                raw = yaml.safe_load(f) or {}
+        except yaml.YAMLError:
+            logger.exception("Failed to parse camera config YAML: %s", self.config_path)
+            return
+
+        if not isinstance(raw, dict):
+            logger.error("Camera config root must be a mapping: %s", self.config_path)
+            return
 
         cameras_section = raw.get("cameras", {})
 
         # Support both dict-keyed format (cam1: {...}) and legacy list format
         if isinstance(cameras_section, dict):
             items = cameras_section.items()
-        else:
+        elif isinstance(cameras_section, list):
             # Legacy list format: [{id: cam_0, ...}, ...]
-            items = ((cam.get("id", f"cam{i}"), cam) for i, cam in enumerate(cameras_section))
+            items = ((cam.get("id", f"cam{i}"), cam) for i, cam in enumerate(cameras_section) if isinstance(cam, dict))
+        else:
+            logger.error("'cameras' must be a mapping or list in %s", self.config_path)
+            return
 
         for cam_id, cam_def in items:
+            if not isinstance(cam_def, dict):
+                logger.warning("Camera %s config is not a mapping, skipping", cam_id)
+                continue
             if not cam_def.get("enabled", True):
                 logger.info("Camera %s disabled, skipping", cam_id)
                 continue
@@ -111,9 +125,11 @@ class CameraManager:
             results[cam_id] = capture.start()
 
         active = [cid for cid, ok in results.items() if ok]
+        if not self.cameras:
+            logger.warning("CameraManager has no configured cameras")
         logger.info(
             "CameraManager started — %d/%d cameras active: %s",
-            len(active), len(self.cameras), ", ".join(active),
+            len(active), len(self.cameras), ", ".join(active) if active else "none",
         )
         return results
 

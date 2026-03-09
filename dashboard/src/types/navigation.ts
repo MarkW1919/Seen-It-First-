@@ -20,6 +20,7 @@ export interface NavStatus {
   navigating: boolean;
   destination: { lat: number; lon: number; display_name: string; radius_ft?: number; radius_m?: number } | null;
   current_pos: LatLon | null;
+  current_route: RouteResponse | null;
   pipeline_active: boolean;
   arrival: {
     active: boolean;
