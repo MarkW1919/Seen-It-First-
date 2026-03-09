@@ -1,17 +1,12 @@
-"""
-License plate OCR using PaddleOCR PP-OCRv4 TensorRT engine.
+"""License plate OCR using PaddleOCR PP-OCRv4 TensorRT engine.
 
-US plates only. No EU/International support in Phase 1.
-Post-processing validates against: ^[A-Z0-9]{2,8}$
+This module is production-focused around pretrained models with lightweight
+post-processing for US plate constraints. It provides:
 
-Phase 1: Uses pretrained PaddleOCR PP-OCRv4 English recognition model.
-No custom training required. Fine-tuning pipeline deferred to Phase 3.
-
-Runs ONLY when plate confidence exceeds threshold.
-Includes rule-based post-processing for US plates.
-
-Model input:  [1, 3, 48, 320] RGB float32, normalised to [-1, 1]
-Model output: [1, T, num_chars+1] CTC probability sequence
+- PP-OCRv4 TensorRT inference.
+- CTC greedy decoding.
+- US-format cleanup and validation.
+- Optional ambiguity correction for OCR confusions (e.g. ``O`` vs ``0``).
 """
 
 import logging
@@ -66,9 +61,6 @@ class PlateOCR:
     """
     PaddleOCR PP-OCRv4 English recognition for US license plates.
 
-    Phase 1: Uses pretrained PP-OCRv4 rec model. No custom training required.
-    Fine-tuning with nighttime datasets deferred to Phase 3.
-
     Model: PP-OCRv4 English rec → ONNX → TensorRT FP16
     Input: [1, 3, 48, 320] RGB, normalised mean=0.5 std=0.5
     Engine size: ~8 MB
@@ -86,6 +78,9 @@ class PlateOCR:
         self.conf_threshold = config.get("confidence_threshold", 0.60)
         self.min_chars = config.get("min_plate_chars", 2)
         self.max_chars = config.get("max_plate_chars", 8)
+        self.enable_ambiguity_correction = config.get(
+            "enable_ambiguity_correction", True
+        )
         self.engine = TRTEngine(self.model_path)
         self._inference_time_ms = 0.0
 
@@ -131,6 +126,8 @@ class PlateOCR:
 
             raw_text, confidence = self._decode_ctc(outputs)
             cleaned = self._postprocess_text(raw_text)
+            if self.enable_ambiguity_correction:
+                cleaned = self._resolve_ambiguities(cleaned)
 
             if confidence >= self.conf_threshold and self.validate_plate(cleaned):
                 results.append(OCRResult(
@@ -229,14 +226,41 @@ class PlateOCR:
         """
         Rule-based cleaning for US license plates.
 
-        - Uppercase normalization
-        - Strip spaces and non-alphanumeric characters
-        - Enforce 2-8 character constraint
-        - Validate against US plate regex: ^[A-Z0-9]{2,8}$
+        - Uppercase normalization.
+        - Strip spaces and non-alphanumeric characters.
         """
         cleaned = text.upper().strip()
         cleaned = re.sub(r"[^A-Z0-9]", "", cleaned)
+        if len(cleaned) > self.max_chars:
+            cleaned = cleaned[:self.max_chars]
         return cleaned
+
+    def _resolve_ambiguities(self, text: str) -> str:
+        """Correct common OCR confusions for mixed alphanumeric plates.
+
+        The heuristic preserves mixed letter/digit structure while correcting
+        obvious runs: long digit runs use number-safe replacements and long
+        alpha runs use letter-safe replacements.
+        """
+        if len(text) < self.min_chars:
+            return text
+
+        chars = list(text)
+        digit_like = {"O": "0", "I": "1", "Z": "2", "S": "5", "B": "8"}
+        alpha_like = {"0": "O", "1": "I", "2": "Z", "5": "S", "8": "B"}
+
+        for idx, ch in enumerate(chars):
+            prev_c = chars[idx - 1] if idx > 0 else ""
+            next_c = chars[idx + 1] if idx < len(chars) - 1 else ""
+            neighbor_digits = sum([prev_c.isdigit(), next_c.isdigit()])
+            neighbor_alpha = sum([prev_c.isalpha(), next_c.isalpha()])
+
+            if ch in digit_like and neighbor_digits > neighbor_alpha:
+                chars[idx] = digit_like[ch]
+            elif ch in alpha_like and neighbor_alpha > neighbor_digits:
+                chars[idx] = alpha_like[ch]
+
+        return "".join(chars)
 
     @staticmethod
     def validate_plate(text: str) -> bool:
