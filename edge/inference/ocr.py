@@ -256,10 +256,12 @@ class PlateOCR:
             neighbor_digits = sum([prev_c.isdigit(), next_c.isdigit()])
             neighbor_alpha = sum([prev_c.isalpha(), next_c.isalpha()])
 
-            if ch in digit_like and neighbor_digits == 2:
+            if ch in digit_like and neighbor_digits > neighbor_alpha:
                 chars[idx] = digit_like[ch]
-            elif ch in alpha_like and neighbor_alpha == 2:
-                chars[idx] = alpha_like[ch]
+            elif ch in alpha_like and neighbor_alpha > neighbor_digits:
+                is_edge_single_alpha = idx in (0, len(source_chars) - 1) and neighbor_alpha == 1
+                if not is_edge_single_alpha:
+                    chars[idx] = alpha_like[ch]
 
         return "".join(chars)
 

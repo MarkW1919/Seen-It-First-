@@ -27,6 +27,13 @@ class TestPlateOCRPostprocess(unittest.TestCase):
         corrected = self.ocr._resolve_ambiguities("1S3")
         self.assertEqual(corrected, "153")
 
+    def test_resolve_ambiguities_avoids_edge_digit_to_alpha_flip(self):
+        corrected = self.ocr._resolve_ambiguities("3S1")
+        self.assertEqual(corrected, "351")
+
+    def test_resolve_ambiguities_converts_leading_ambiguous_in_digit_context(self):
+        corrected = self.ocr._resolve_ambiguities("O12")
+        self.assertEqual(corrected, "012")
 
 
 if __name__ == "__main__":
