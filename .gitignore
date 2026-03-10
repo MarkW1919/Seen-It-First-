@@ -48,6 +48,7 @@ captures/
 *.swp
 *.swo
 *~
+dashboard/node_modules/
 
 # OS
 .DS_Store
