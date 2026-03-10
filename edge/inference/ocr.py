@@ -86,6 +86,10 @@ class PlateOCR:
         self.conf_threshold = config.get("confidence_threshold", 0.60)
         self.min_chars = config.get("min_plate_chars", 2)
         self.max_chars = config.get("max_plate_chars", 8)
+        self.clahe_clip_limit = float(config.get("clahe_clip_limit", 3.0))
+        grid = int(config.get("clahe_grid_size", 8))
+        self.clahe_grid_size = (grid, grid)
+        self.gamma = float(config.get("gamma", 0.7))
         self.engine = TRTEngine(self.model_path)
         self._inference_time_ms = 0.0
 
@@ -162,11 +166,19 @@ class PlateOCR:
         return crop
 
     def _enhance_night(self, crop: np.ndarray) -> np.ndarray:
-        """Apply CLAHE to plate ROI only (not full frame)."""
+        """Apply CLAHE + gamma correction to plate ROI only."""
         gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
-        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+        clahe = cv2.createCLAHE(
+            clipLimit=self.clahe_clip_limit,
+            tileGridSize=self.clahe_grid_size,
+        )
         enhanced = clahe.apply(gray)
-        return cv2.cvtColor(enhanced, cv2.COLOR_GRAY2BGR)
+
+        # Gamma correction (<1 brightens shadows)
+        gamma = max(0.1, self.gamma)
+        table = np.array([(i / 255.0) ** gamma * 255 for i in range(256)]).astype(np.uint8)
+        corrected = cv2.LUT(enhanced, table)
+        return cv2.cvtColor(corrected, cv2.COLOR_GRAY2BGR)
 
     def _preprocess(self, crop: np.ndarray) -> np.ndarray:
         """

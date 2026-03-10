@@ -72,7 +72,7 @@ class InferenceScheduler:
 
         # Night mode state
         self._night_mode: dict[str, bool] = {}
-        self._brightness_threshold = 60
+        self._brightness_threshold = config.get("brightness_threshold", 60)
 
         # Model references kept for backward compat (thermal management,
         # shutdown, and external callers that access scheduler.classifier etc.)

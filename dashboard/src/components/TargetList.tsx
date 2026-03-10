@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback } from "react";
 import type { RankedVehicle } from "../types/navigation";
 import { VehicleDetectionCard } from "./VehicleDetectionCard";
 
@@ -13,9 +13,11 @@ interface TargetsResponse {
 interface Props {
   /** When true (ARRIVED event received) the panel is visible and polling starts. */
   scanning: boolean;
+  /** Optional static targets used for UI previews/demo mode. */
+  previewTargets?: RankedVehicle[];
 }
 
-export function TargetList({ scanning }: Props) {
+export function TargetList({ scanning, previewTargets }: Props) {
   const [vehicles, setVehicles] = useState<RankedVehicle[]>([]);
   const [error, setError]       = useState<string | null>(null);
   const [loading, setLoading]   = useState(false);
@@ -41,12 +43,19 @@ export function TargetList({ scanning }: Props) {
       return;
     }
 
+    if (previewTargets && previewTargets.length > 0) {
+      setVehicles(previewTargets.slice(0, MAX_TARGETS));
+      setLoading(false);
+      setError(null);
+      return;
+    }
+
     setLoading(true);
     fetchTargets();
 
     const interval = setInterval(fetchTargets, REFRESH_INTERVAL_MS);
     return () => clearInterval(interval);
-  }, [scanning, fetchTargets]);
+  }, [scanning, fetchTargets, previewTargets]);
 
   if (!scanning) return null;
 

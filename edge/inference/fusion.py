@@ -267,6 +267,7 @@ class DetectionFusionEngine:
                     year_range=best.year_range,
                     latitude=best.latitude,
                     longitude=best.longitude,
+                    detection_address=best.detection_address,
                     fingerprint=best.fingerprint,
                 )
             except Exception:
