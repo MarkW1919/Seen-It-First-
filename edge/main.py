@@ -165,7 +165,9 @@ class EdgeService:
 
         vehicle_det = VehicleDetector(inf_config.get("vehicle_detection", {}))
         plate_det   = PlateDetector(inf_config.get("plate_detection", {}))
-        ocr         = PlateOCR(inf_config.get("ocr", {}))
+        ocr_cfg = dict(inf_config.get("ocr", {}))
+        ocr_cfg.update(self.config.get("night_vision", {}))
+        ocr         = PlateOCR(ocr_cfg)
 
         # Vehicle intelligence sub-models (all ONNX-based, graceful fallback)
         models_dir      = str(BASE_DIR / "edge" / "models")
@@ -248,7 +250,8 @@ class EdgeService:
         )
 
         # Scheduler
-        sched_config = self.config.get("scheduling", {})
+        sched_config = dict(self.config.get("scheduling", {}))
+        sched_config["brightness_threshold"] = self.config.get("night_vision", {}).get("brightness_threshold", 60)
         self.scheduler = InferenceScheduler(sched_config)
         self.scheduler.set_camera_manager(self.camera_manager)
         self.scheduler.set_models(
@@ -302,6 +305,7 @@ class EdgeService:
             event_publisher=self.event_publisher,
             ranking_engine=self.ranking_engine,
             gps_state=self.gps_state,
+            repository=self.repo,
         )
 
         host = api_cfg.get("host", "0.0.0.0")
@@ -375,7 +379,6 @@ class EdgeService:
 
             # Process frames from all cameras
             frames = self.camera_manager.get_latest_frames()
-
             for cam_id, packet in frames.items():
                 if packet is None:
                     continue
@@ -383,31 +386,6 @@ class EdgeService:
                 result = self.scheduler.process_frame(packet)
                 if result is None:
                     continue  # frame skipped (rate limiting)
-
-                # Save detections with plate info
-                for ocr_result in result.ocr_results:
-                    plate = ocr_result.plate_detection
-                    vehicle = plate.vehicle_box
-                    classification = result.classifications.get(None)
-
-                    self.repo.save_detection(
-                        result,
-                        plate_text=ocr_result.text,
-                        plate_confidence=ocr_result.confidence,
-                        vehicle_class=vehicle.class_name,
-                        vehicle_color=classification.color if classification else "",
-                        year_bucket=classification.year_bucket if classification else "",
-                        bbox=(vehicle.x1, vehicle.y1, vehicle.x2, vehicle.y2),
-                    )
-
-                # Hotlist check
-                if result.ocr_results:
-                    alerts = self.hotlist_matcher.check(
-                        result.ocr_results, cam_id,
-                    )
-                    for alert in alerts:
-                        self.repo.save_alert(alert)
-                        self.alert_manager.fire_alert(alert)
 
             # Periodic hotlist reload check
             if self._loop_count % 500 == 0:

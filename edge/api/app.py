@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from edge.inference.events import EventPublisher
     from edge.ranking.engine import RankingEngine
     from edge.api.state import GpsState
+    from edge.storage.repository import DetectionRepository
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +92,7 @@ def create_app(
     event_publisher:  "EventPublisher | None" = None,
     ranking_engine:   "RankingEngine | None" = None,
     gps_state:        "GpsState | None" = None,
+    repository:       "DetectionRepository | None" = None,
 ) -> FastAPI:
     """
     Build and return the FastAPI application.
@@ -128,6 +130,7 @@ def create_app(
         ws_manager=ws_manager,
         ranking_engine=ranking_engine,
         gps_state=gps_state,
+        repository=repository,
     )
 
     @asynccontextmanager
