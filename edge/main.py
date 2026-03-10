@@ -318,6 +318,7 @@ class EdgeService:
         api_app = create_app(
             scheduler=self.scheduler,
             config=nav_cfg,
+            api_config=api_cfg,
             ws_manager=ws_manager,
             event_publisher=self.event_publisher,
             ranking_engine=self.ranking_engine,

@@ -147,3 +147,11 @@ navigation:
 api:
   host: "0.0.0.0"
   port: 8080
+  # Set auth_token to a non-empty string to require X-API-Key / Bearer token
+  # on all /navigation/* routes and WebSocket connections.
+  # Leave empty ("") to disable auth (suitable for isolated LAN deployments).
+  auth_token: ""
+  # Comma-separated or YAML list of allowed CORS origins for the dashboard.
+  # Use "*" only in isolated/dev environments.
+  allowed_origins:
+    - "http://localhost:5173"
