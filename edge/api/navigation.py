@@ -299,7 +299,6 @@ def search_detections(body: DetectionSearchRequest, request: Request):
                 vehicle_class=body.vehicle_class,
                 make=body.make,
                 model=body.model,
-                detection_address=body.address,
                 limit=body.limit,
             )
         except GeocoderError:
