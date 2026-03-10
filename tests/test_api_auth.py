@@ -104,6 +104,11 @@ class TestApiAuthMiddleware(unittest.TestCase):
             )
             self.assertEqual(response.status_code, 200)
 
+    def test_options_without_preflight_header_requires_auth(self):
+        with self._client("secret-token") as client:
+            response = client.options("/navigation/status")
+            self.assertEqual(response.status_code, 401)
+
     def test_navigation_get_with_preflight_header_still_requires_auth(self):
         with self._client("secret-token") as client:
             response = client.get(
