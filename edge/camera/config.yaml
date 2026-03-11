@@ -6,7 +6,7 @@ cameras:
 
   cam1:
     sensor_id: 0
-    role: lpr          # long-range licence-plate recognition
+    role: lpr          # long-range license-plate recognition
     housing: front
     width: 1920
     height: 1080

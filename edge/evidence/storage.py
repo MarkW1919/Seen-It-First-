@@ -57,6 +57,7 @@ class EvidenceStorage:
         year_range:     str = "",
         latitude:       float = 0.0,
         longitude:      float = 0.0,
+        detection_address: str = "",
         fingerprint:    str = "",
     ) -> int:
         """
@@ -99,6 +100,7 @@ class EvidenceStorage:
                 confidence=confidence,
                 latitude=latitude,
                 longitude=longitude,
+                detection_address=detection_address,
                 fingerprint=fingerprint,
             )
             logger.debug(

@@ -8,7 +8,7 @@ Model: vehicle_make_model_classifier.onnx
 The model is expected to output joint make-model-year labels that are
 decoded via a JSON label map stored next to the model file:
 
-    edge/models/vehicle_make_model_labels.json
+    models/onnx/vehicle_make_model_labels.json
 
 Label file format::
 
@@ -59,7 +59,7 @@ class VehicleClassifierModel:
 
     Usage::
 
-        clf = VehicleClassifierModel({"model_path": "edge/models/vehicle_make_model_classifier.onnx"})
+        clf = VehicleClassifierModel({"model_path": "models/onnx/vehicle_make_model_classifier.onnx"})
         clf.load()
         result = clf.classify(vehicle_crop)  # → ClassifierResult or None
     """

@@ -28,11 +28,26 @@ class ThermalMonitor:
     """
 
     def __init__(self, config: dict):
-        self.threshold_1 = config.get("threshold_1", 80)
-        self.threshold_2 = config.get("threshold_2", 90)
-        self.cooldown_fps_1 = config.get("cooldown_fps_1", 10)
-        self.cooldown_fps_2 = config.get("cooldown_fps_2", 8)
-        self.poll_interval = config.get("poll_interval_sec", 5)
+        self.threshold_1 = float(config.get("threshold_1", 80))
+        self.threshold_2 = float(config.get("threshold_2", 90))
+        if self.threshold_2 < self.threshold_1:
+            logger.warning(
+                "thermal config invalid: threshold_2 (%.1f) < threshold_1 (%.1f); normalizing",
+                self.threshold_2,
+                self.threshold_1,
+            )
+            self.threshold_2 = self.threshold_1
+
+        self.cooldown_fps_1 = max(1, int(config.get("cooldown_fps_1", 10)))
+        self.cooldown_fps_2 = max(1, int(config.get("cooldown_fps_2", 8)))
+        if self.cooldown_fps_2 > self.cooldown_fps_1:
+            logger.warning(
+                "thermal config unexpected: cooldown_fps_2 (%d) > cooldown_fps_1 (%d)",
+                self.cooldown_fps_2,
+                self.cooldown_fps_1,
+            )
+
+        self.poll_interval = max(0.1, float(config.get("poll_interval_sec", 5)))
         self.zone_path = Path(config.get(
             "zone_path",
             "/sys/devices/virtual/thermal/thermal_zone0/temp",
@@ -92,11 +107,12 @@ class ThermalMonitor:
 
     def get_target_fps(self, normal_fps: int) -> int:
         """Get the FPS target for current throttle level."""
+        base_fps = max(1, int(normal_fps))
         if self._throttle_level == 2:
-            return self.cooldown_fps_2
-        elif self._throttle_level == 1:
-            return self.cooldown_fps_1
-        return normal_fps
+            return min(base_fps, self.cooldown_fps_2)
+        if self._throttle_level == 1:
+            return min(base_fps, self.cooldown_fps_1)
+        return base_fps
 
     @property
     def should_suspend_classifier(self) -> bool:
