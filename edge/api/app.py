@@ -293,13 +293,18 @@ def create_app(
     app.add_middleware(
         CORSMiddleware,
         allow_origins=allowed_origins,
-        allow_methods=["GET", "POST"],
+        allow_methods=["GET", "POST", "OPTIONS"],
         allow_headers=["*"],
     )
 
     @app.middleware("http")
     async def auth_middleware(request: Request, call_next):
-        if request.method == "OPTIONS":
+        # Browser CORS preflights are intentionally unauthenticated and must
+        # pass through so CORSMiddleware can return the negotiated headers.
+        # Restrict this bypass to actual preflight requests (OPTIONS with
+        # Access-Control-Request-Method) so protected routes cannot be
+        # accessed by spoofing CORS headers on normal methods.
+        if request.method == "OPTIONS" and request.headers.get("access-control-request-method"):
             return await call_next(request)
 
         if api_token and _is_protected_path(request.url.path):
