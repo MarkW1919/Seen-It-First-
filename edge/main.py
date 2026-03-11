@@ -52,6 +52,10 @@ logger = logging.getLogger("seen-it-first")
 # Base directory (repo root)
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# Canonical runtime model roots
+MODELS_ROOT = BASE_DIR / "models"
+ONNX_MODELS_ROOT = MODELS_ROOT / "onnx"
+
 
 def load_config(config_path: str | None = None) -> dict:
     """Load system configuration from YAML."""
@@ -170,17 +174,24 @@ class EdgeService:
         ocr         = PlateOCR(ocr_cfg)
 
         # Vehicle intelligence sub-models (all ONNX-based, graceful fallback)
-        models_dir      = str(BASE_DIR / "edge" / "models")
-        clf_cfg         = inf_config.get("classifier", {})
-        clf_model_cfg   = inf_config.get("vehicle_classifier", {
+        models_dir = str(ONNX_MODELS_ROOT)
+        clf_cfg = inf_config.get("classifier", {})
+
+        # Merge defaults with config overrides so model_path is always present.
+        clf_model_cfg = {
             "model_path": f"{models_dir}/vehicle_make_model_classifier.onnx",
-        })
-        color_cfg       = inf_config.get("vehicle_color", {
+            **(inf_config.get("vehicle_classifier", {}) or {}),
+        }
+        color_cfg = {
             "model_path": f"{models_dir}/vehicle_color_model.onnx",
-        })
-        reid_cfg        = inf_config.get("vehicle_reid", {
+            **(inf_config.get("vehicle_color", {}) or {}),
+        }
+        reid_cfg = {
             "model_path": f"{models_dir}/vehicle_embedding_model.onnx",
-        })
+            **(inf_config.get("vehicle_reid", {}) or {}),
+        }
+
+        self._preflight_model_files(inf_config, clf_model_cfg, color_cfg, reid_cfg)
 
         clf_model   = VehicleClassifierModel(clf_model_cfg)
         color_det   = VehicleColorDetector(color_cfg)
@@ -285,6 +296,57 @@ class EdgeService:
 
         logger.info("Initialization complete")
         return True
+
+    def _preflight_model_files(
+        self,
+        inf_config: dict,
+        clf_model_cfg: dict,
+        color_cfg: dict,
+        reid_cfg: dict,
+    ) -> None:
+        """Log missing model artifacts at startup using absolute paths."""
+
+        expected_paths = [
+            inf_config.get("vehicle_detection", {}).get("model_path"),
+            inf_config.get("plate_detection", {}).get("model_path"),
+            inf_config.get("ocr", {}).get("model_path"),
+            inf_config.get("classifier", {}).get("model_path"),
+            clf_model_cfg.get("model_path"),
+            color_cfg.get("model_path"),
+            reid_cfg.get("model_path"),
+        ]
+
+        # Label map is expected next to the make/model ONNX classifier.
+        clf_model_path = self._resolve_model_path(clf_model_cfg.get("model_path"))
+        if clf_model_path is not None:
+            expected_paths.append(str(clf_model_path.parent / "vehicle_make_model_labels.json"))
+
+        missing: set[Path] = set()
+        for raw_path in expected_paths:
+            abs_path = self._resolve_model_path(raw_path)
+            if abs_path is None:
+                continue
+            if not abs_path.exists():
+                missing.add(abs_path)
+
+        if not missing:
+            logger.info("Model preflight: all expected model artifacts found")
+            return
+
+        missing_sorted = sorted(missing)
+        logger.warning("Model preflight: %d expected files missing", len(missing_sorted))
+        for missing_path in missing_sorted:
+            logger.warning("Model preflight missing file: %s", missing_path)
+
+    def _resolve_model_path(self, raw_path: str | None) -> Path | None:
+        """Resolve raw model paths (relative/absolute/~) into absolute paths."""
+        if not raw_path:
+            return None
+
+        path = Path(raw_path).expanduser()
+        if not path.is_absolute():
+            path = BASE_DIR / path
+        return path.resolve()
 
     def _start_api_server(self):
         """Start the FastAPI navigation server in a daemon thread."""

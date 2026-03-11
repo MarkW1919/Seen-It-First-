@@ -259,7 +259,11 @@ export default function NavigationPage() {
   // ------------------------------------------------------------------
   useQuery<NavStatus>({
     queryKey: ["nav-status"],
-    queryFn: () => fetch("/navigation/status").then((r) => r.json()),
+    queryFn: async () => {
+      const res = await fetch("/navigation/status");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json() as Promise<NavStatus>;
+    },
     refetchInterval: navigating ? 5000 : false,
     enabled: !isPreview && navigating,
   });
@@ -515,7 +519,6 @@ export default function NavigationPage() {
             <input
               style={styles.input}
               type="text"
-              placeholder="Enter address or place name…"
               value={address}
               onChange={(e) => setAddress(e.target.value)}
               onKeyDown={(e) => {
@@ -525,6 +528,9 @@ export default function NavigationPage() {
               }}
               disabled={navigating || isLoading || isPreview}
             />
+            <div style={{ color: "#94a3b8", fontSize: "0.75rem", marginTop: "0.5rem", marginBottom: "0.5rem" }}>
+              Enter address or place name, then press Enter or Search.
+            </div>
             <button
               style={{ ...styles.btn, ...styles.btnSecondary }}
               onClick={() => address.trim() && !isPreview && geocodeMutation.mutate(address.trim())}
