@@ -2,13 +2,14 @@
 """
 Download pretrained models for Seen-It-First Phase 1.
 
-Downloads to models/raw/:
+Downloads source pretrained artifacts to models/raw/:
   yolov8n.pt          — vehicle detection (COCO pretrained)
   yolov8n_lp.pt       — license plate detection (US-plate pretrained)
   yolov8n-cls.pt      — vehicle classification (ImageNet pretrained)
   en_PP-OCRv4_rec_infer/  — PaddleOCR English recognition model
 
-Run once before build_tensorrt_engines.py.
+Run once before build_tensorrt_engines.py, which exports runtime ONNX assets
+to models/onnx and TensorRT engines to models/<module>/.
 
 Phase 1: ONLY pretrained models. No training, no datasets.
 

@@ -7,6 +7,7 @@ app.py (which mounts the navigation router) and navigation.py
 """
 
 from typing import TYPE_CHECKING, Any
+import threading
 
 from edge.navigation.geocoder import Geocoder
 from edge.navigation.router import Router
@@ -15,6 +16,7 @@ from edge.navigation.arrival_detector import ArrivalDetector
 if TYPE_CHECKING:
     from edge.inference.scheduler import InferenceScheduler
     from edge.ranking.engine import RankingEngine
+    from edge.storage.repository import DetectionRepository
 
 
 class GpsState:
@@ -23,28 +25,43 @@ class GpsState:
 
     Written by the navigation GPS endpoint (uvicorn thread) and read by
     the inference pipeline (inference thread) when building Detection
-    objects.  CPython's GIL makes float attribute writes atomic, so no
-    explicit lock is needed.
+    objects. A small lock keeps the lat/lon pair consistent across reads.
     """
 
     def __init__(self):
         self._lat: float = 0.0
         self._lon: float = 0.0
+        self._lock = threading.Lock()
+        self._address: str = ""
 
     def update(self, lat: float, lon: float):
-        self._lat = lat
-        self._lon = lon
+        with self._lock:
+            self._lat = lat
+            self._lon = lon
+
+    def set_address(self, address: str):
+        self._address = address.strip()
+
+    def clear_address(self):
+        self._address = ""
 
     def get(self) -> tuple[float, float]:
-        return self._lat, self._lon
+        with self._lock:
+            return self._lat, self._lon
 
     @property
     def lat(self) -> float:
-        return self._lat
+        with self._lock:
+            return self._lat
 
     @property
     def lon(self) -> float:
-        return self._lon
+        with self._lock:
+            return self._lon
+
+    @property
+    def address(self) -> str:
+        return self._address
 
 
 class NavigationState:
@@ -62,6 +79,7 @@ class NavigationState:
         ws_manager:       Any,       # ConnectionManager — typed as Any to avoid re-importing
         ranking_engine:   "RankingEngine | None" = None,
         gps_state:        "GpsState | None" = None,
+        repository:       "DetectionRepository | None" = None,
     ):
         self.scheduler        = scheduler
         self.geocoder         = geocoder
@@ -70,6 +88,7 @@ class NavigationState:
         self.ws_manager       = ws_manager
         self.ranking_engine   = ranking_engine
         self.gps_state        = gps_state or GpsState()
+        self.repository       = repository
 
         # Navigation session state
         self.is_navigating: bool = False

@@ -10,7 +10,7 @@ import logging
 import queue
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 import cv2
@@ -70,7 +70,6 @@ class CameraCapture:
     def __init__(self, config: CameraConfig, queue_size: int = 5):
         self.config = config
         self._frame_queue: queue.Queue[FramePacket] = queue.Queue(maxsize=queue_size)
-        self._lock = threading.Lock()
         self._capture: Optional[cv2.VideoCapture] = None
         self._thread: Optional[threading.Thread] = None
         self._running = False
@@ -88,7 +87,7 @@ class CameraCapture:
 
     def _build_pipeline(self) -> str:
         cfg = self.config
-        if cfg.camera_type == "csi":
+        if cfg.camera_type.lower() == "csi":
             return build_csi_pipeline(cfg.sensor_id, cfg.width, cfg.height, cfg.fps)
         return build_rtsp_pipeline(cfg.uri)
 
@@ -179,12 +178,16 @@ class CameraCapture:
         """
         Return the most recent frame from the queue, or None if empty.
 
-        Equivalent to get_frame(); provided so call-sites can use either name.
+        Drains any backlog and returns the newest packet to keep inference
+        latency low under load.
         """
-        try:
-            return self._frame_queue.get_nowait()
-        except queue.Empty:
-            return None
+        latest: Optional[FramePacket] = None
+        while True:
+            try:
+                latest = self._frame_queue.get_nowait()
+            except queue.Empty:
+                break
+        return latest
 
     def get_frame(self) -> Optional[FramePacket]:
         """Alias for read_frame()."""
