@@ -164,12 +164,17 @@ def _ts() -> str:
 
 
 def _safe_crop(frame: np.ndarray, bbox: list[float]) -> np.ndarray:
-    """Clamp bbox to frame bounds and return a contiguous copy of the crop."""
+    """Clamp bbox to frame bounds and return a contiguous non-empty crop."""
     h, w = frame.shape[:2]
     x1 = max(0, int(bbox[0]))
     y1 = max(0, int(bbox[1]))
     x2 = min(w, int(bbox[2]))
     y2 = min(h, int(bbox[3]))
+
+    if x2 <= x1 or y2 <= y1:
+        # Keep downstream writes stable by returning a 1x1 black pixel.
+        return np.zeros((1, 1, 3), dtype=frame.dtype)
+
     crop = frame[y1:y2, x1:x2]
     return np.ascontiguousarray(crop)  # contiguous copy, safe for background write
 
@@ -177,6 +182,8 @@ def _safe_crop(frame: np.ndarray, bbox: list[float]) -> np.ndarray:
 def _write_jpeg(image: np.ndarray, path: Path, quality_params: list):
     """Write a JPEG to disk. Runs in a background thread."""
     try:
-        cv2.imwrite(str(path), image, quality_params)
+        ok = cv2.imwrite(str(path), image, quality_params)
+        if not ok:
+            logger.error("OpenCV returned False while writing evidence image: %s", path)
     except Exception:
         logger.exception("Failed to write evidence image: %s", path)

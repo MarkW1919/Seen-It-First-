@@ -92,9 +92,9 @@ class AlertManager:
                 # Last resort: terminal bell
                 print("\a", end="", flush=True)
             except subprocess.TimeoutExpired:
-                pass
+                logger.debug("Audio alert timed out while running 'play'")
         except subprocess.TimeoutExpired:
-            pass
+            logger.debug("Audio alert timed out while running 'beep'")
 
     @property
     def alert_count(self) -> int:

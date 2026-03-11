@@ -8,14 +8,17 @@ const MAX_TARGETS = 10;
 
 interface TargetsResponse {
   targets: RankedVehicle[];
+  error?: string;
 }
 
 interface Props {
   /** When true (ARRIVED event received) the panel is visible and polling starts. */
   scanning: boolean;
+  /** Optional static targets used for UI previews/demo mode. */
+  previewTargets?: RankedVehicle[];
 }
 
-export function TargetList({ scanning }: Props) {
+export function TargetList({ scanning, previewTargets }: Props) {
   const [vehicles, setVehicles] = useState<RankedVehicle[]>([]);
   const [error, setError]       = useState<string | null>(null);
   const [loading, setLoading]   = useState(false);
@@ -23,10 +26,19 @@ export function TargetList({ scanning }: Props) {
   const fetchTargets = useCallback(async (signal?: AbortSignal) => {
     try {
       const res = await fetch(TARGETS_ENDPOINT, { signal });
+    setLoading(true);
+    try {
+      const res = await fetch("/navigation/targets", { signal });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: TargetsResponse = await res.json();
+      if (data.error) throw new Error(data.error);
       setVehicles(data.targets.slice(0, MAX_TARGETS));
       setError(null);
+      const res = await fetch("/navigation/targets");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data: TargetsResponse = await res.json();
+      setVehicles((data.targets ?? []).slice(0, MAX_TARGETS));
+      setError(data.error ?? null);
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
       setError(err instanceof Error ? err.message : "Fetch failed");
@@ -44,6 +56,22 @@ export function TargetList({ scanning }: Props) {
       return;
     }
 
+    const controller = new AbortController();
+    fetchTargets(controller.signal);
+
+    const interval = setInterval(() => fetchTargets(controller.signal), REFRESH_INTERVAL_MS);
+    return () => {
+      controller.abort();
+      clearInterval(interval);
+    };
+  }, [scanning, fetchTargets]);
+    if (previewTargets && previewTargets.length > 0) {
+      setVehicles(previewTargets.slice(0, MAX_TARGETS));
+      setLoading(false);
+      setError(null);
+      return;
+    }
+
     setLoading(true);
     const abortController = new AbortController();
     fetchTargets(abortController.signal);
@@ -57,6 +85,9 @@ export function TargetList({ scanning }: Props) {
       clearInterval(interval);
     };
   }, [scanning, fetchTargets]);
+    const interval = setInterval(fetchTargets, REFRESH_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, [scanning, fetchTargets, previewTargets]);
 
   if (!scanning) return null;
 
