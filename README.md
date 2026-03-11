@@ -136,6 +136,9 @@ sudo systemctl status seen-it-first-edge
 journalctl -u seen-it-first-edge -f
 ```
 
+`seen-it-first-edge.service` runs as `Type=simple` without systemd watchdog heartbeats.
+The runtime logs this at startup as `Systemd watchdog mode: disabled (Type=simple, no heartbeat notifications)`.
+
 ## Night Vision
 
 Night mode is auto-detected via histogram brightness.
