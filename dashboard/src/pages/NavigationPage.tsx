@@ -343,6 +343,7 @@ export default function NavigationPage() {
   // becomes false (navigation stopped or ARRIVED received).
   // ------------------------------------------------------------------
   useEffect(() => {
+    if (!navigating) return;
     if (isPreview || (!navigating && !arrived)) return;
 
     const interval = setInterval(() => {

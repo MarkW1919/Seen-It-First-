@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import type { RankedVehicle } from "../types/navigation";
 import { VehicleDetectionCard } from "./VehicleDetectionCard";
 
+const TARGETS_ENDPOINT = "/navigation/targets";
 const REFRESH_INTERVAL_MS = 3000;
 const MAX_TARGETS = 10;
 
@@ -23,6 +24,8 @@ export function TargetList({ scanning, previewTargets }: Props) {
   const [loading, setLoading]   = useState(false);
 
   const fetchTargets = useCallback(async (signal?: AbortSignal) => {
+    try {
+      const res = await fetch(TARGETS_ENDPOINT, { signal });
     setLoading(true);
     try {
       const res = await fetch("/navigation/targets", { signal });
@@ -70,8 +73,18 @@ export function TargetList({ scanning, previewTargets }: Props) {
     }
 
     setLoading(true);
-    fetchTargets();
+    const abortController = new AbortController();
+    fetchTargets(abortController.signal);
 
+    const interval = setInterval(() => {
+      fetchTargets();
+    }, REFRESH_INTERVAL_MS);
+
+    return () => {
+      abortController.abort();
+      clearInterval(interval);
+    };
+  }, [scanning, fetchTargets]);
     const interval = setInterval(fetchTargets, REFRESH_INTERVAL_MS);
     return () => clearInterval(interval);
   }, [scanning, fetchTargets, previewTargets]);
