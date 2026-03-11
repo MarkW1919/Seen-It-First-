@@ -117,6 +117,23 @@ nano edge/camera/config.yaml
 python -m edge.main
 ```
 
+## Preflight Before Enable
+
+Run the deployment preflight checker before enabling the service. It validates:
+
+- required config files exist
+- required model/engine paths from `edge/config/system.yaml`
+- writable runtime directories (`data/`, `logs/`)
+- camera config parse + enabled camera validity
+
+```bash
+python scripts/preflight_check.py \
+  --system-config edge/config/system.yaml \
+  --camera-config edge/camera/config.yaml
+```
+
+The checker exits non-zero on required failures and prints actionable errors with exact missing keys/paths.
+
 ## Production Deployment
 
 ```bash
