@@ -130,6 +130,14 @@ def _log_unauthorized_ws(ws: WebSocket):
     )
 
 
+def _is_cors_preflight(request: Request) -> bool:
+    return (
+        request.method == "OPTIONS"
+        and "origin" in request.headers
+        and "access-control-request-method" in request.headers
+    )
+
+
 class ConnectionManager:
     """Broadcast JSON events to all connected WebSocket clients."""
 
@@ -230,6 +238,9 @@ def create_app(
 
     @app.middleware("http")
     async def auth_http_requests(request: Request, call_next):
+        if request.url.path.startswith("/navigation") and _is_cors_preflight(request):
+            return await call_next(request)
+
         if request.url.path.startswith("/navigation") and not _is_authorized(request.headers, auth):
             _log_unauthorized_http(request)
             return JSONResponse(
