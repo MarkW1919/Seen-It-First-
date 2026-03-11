@@ -4,6 +4,8 @@ Data repository: insert and query detections, alerts, and system events.
 
 import logging
 import time
+import math
+from typing import Optional
 
 from edge.storage.database import Database
 from edge.inference.scheduler import PipelineResult
@@ -33,6 +35,7 @@ class DetectionRepository:
         year_bucket: str = "",
         bbox: tuple[int, int, int, int] = (0, 0, 0, 0),
         snapshot_path: str = "",
+        detection_address: str = "",
     ) -> int:
         """Insert a detection record. Returns the row ID."""
         cursor = self.db.execute(
@@ -41,8 +44,8 @@ class DetectionRepository:
                 (timestamp, camera_id, track_id, plate_text, plate_confidence,
                  vehicle_class, vehicle_color, year_bucket,
                  bbox_x1, bbox_y1, bbox_x2, bbox_y2,
-                 snapshot_path, night_mode)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 snapshot_path, night_mode, detection_address)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 result.timestamp,
@@ -56,6 +59,7 @@ class DetectionRepository:
                 bbox[0], bbox[1], bbox[2], bbox[3],
                 snapshot_path,
                 1 if result.night_mode else 0,
+                detection_address,
             ),
         )
         self.db.commit()
@@ -82,6 +86,7 @@ class DetectionRepository:
         latitude:         float = 0.0,
         longitude:        float = 0.0,
         fingerprint:      str = "",
+        detection_address: str = "",
     ) -> int:
         """
         Insert a confirmed-detection record that includes evidence image paths,
@@ -96,11 +101,11 @@ class DetectionRepository:
                 (timestamp, camera_id, track_id, plate_text, plate_confidence,
                  vehicle_class, vehicle_color, year_bucket,
                  make, model, year_range, confidence, latitude, longitude,
-                 fingerprint,
+                 detection_address, fingerprint,
                  bbox_x1, bbox_y1, bbox_x2, bbox_y2,
                  snapshot_path, vehicle_path, plate_path, composite_path,
                  night_mode)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 timestamp,
@@ -117,6 +122,7 @@ class DetectionRepository:
                 confidence,
                 latitude,
                 longitude,
+                detection_address,
                 fingerprint,
                 bbox[0], bbox[1], bbox[2], bbox[3],
                 composite_path,   # snapshot_path = composite for dashboard compat
@@ -214,6 +220,91 @@ class DetectionRepository:
             (normalized_plate,),
         )
         return [dict(row) for row in cursor.fetchall()]
+
+
+    def search_detections(
+        self,
+        plate_text: str = "",
+        vehicle_class: str = "",
+        make: str = "",
+        model: str = "",
+        detection_address: str = "",
+        limit: int = 200,
+    ) -> list[dict]:
+        clauses = []
+        params: list[object] = []
+
+        if plate_text.strip():
+            clauses.append("UPPER(COALESCE(plate_text,'')) LIKE ?")
+            params.append(f"%{plate_text.upper().strip()}%")
+        if vehicle_class.strip():
+            clauses.append("LOWER(COALESCE(vehicle_class,'')) LIKE ?")
+            params.append(f"%{vehicle_class.lower().strip()}%")
+        if make.strip():
+            clauses.append("LOWER(COALESCE(make,'')) LIKE ?")
+            params.append(f"%{make.lower().strip()}%")
+        if model.strip():
+            clauses.append("LOWER(COALESCE(model,'')) LIKE ?")
+            params.append(f"%{model.lower().strip()}%")
+        if detection_address.strip():
+            clauses.append("LOWER(COALESCE(detection_address,'')) LIKE ?")
+            params.append(f"%{detection_address.lower().strip()}%")
+
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        q = f"SELECT * FROM detections {where} ORDER BY timestamp DESC LIMIT ?"
+        params.append(limit)
+        cursor = self.db.execute(q, tuple(params))
+        return [dict(row) for row in cursor.fetchall()]
+
+    @staticmethod
+    def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+        r = 6371000.0
+        p1, p2 = math.radians(lat1), math.radians(lat2)
+        dphi = math.radians(lat2 - lat1)
+        dl = math.radians(lon2 - lon1)
+        a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+        return 2 * r * math.asin(math.sqrt(a))
+
+    def search_detections_near(
+        self,
+        lat: float,
+        lon: float,
+        radius_m: float = 120.0,
+        plate_text: str = "",
+        vehicle_class: str = "",
+        make: str = "",
+        model: str = "",
+        detection_address: str = "",
+        limit: int = 300,
+    ) -> list[dict]:
+        rows = self.search_detections(
+            plate_text=plate_text,
+            vehicle_class=vehicle_class,
+            make=make,
+            model=model,
+            detection_address=detection_address,
+            limit=limit,
+        )
+        out = []
+        for row in rows:
+            rlat = row.get("latitude")
+            rlon = row.get("longitude")
+            if rlat is None or rlon is None:
+                continue
+            try:
+                dist = self._haversine_m(float(lat), float(lon), float(rlat), float(rlon))
+            except Exception:
+                continue
+            if dist <= radius_m:
+                row["distance_m"] = round(dist, 2)
+                out.append(row)
+        out.sort(key=lambda x: x.get("distance_m", 1e9))
+        return out
+
+    def get_detection_by_id(self, detection_id: int) -> dict | None:
+        cursor = self.db.execute("SELECT * FROM detections WHERE id = ?", (detection_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
 
     def get_detection_count(self) -> int:
         cursor = self.db.execute("SELECT COUNT(*) FROM detections")

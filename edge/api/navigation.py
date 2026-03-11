@@ -10,6 +10,7 @@ GET  /navigation/status      — current navigation state snapshot
 """
 
 import logging
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -75,6 +76,42 @@ class GPSRequest(BaseModel):
     lat: float = Field(..., ge=_LAT_MIN, le=_LAT_MAX)
     lon: float = Field(..., ge=_LON_MIN, le=_LON_MAX)
 
+
+
+class DetectionSearchRequest(BaseModel):
+    plate_text: str = ""
+    vehicle_class: str = ""
+    make: str = ""
+    model: str = ""
+    address: str = ""
+    radius_m: float = Field(default=120.0, ge=1.0, le=5000.0)
+    limit: int = Field(default=100, ge=1, le=500)
+
+
+class DetectionSummary(BaseModel):
+    id: int
+    timestamp: float
+    plate_text: str | None = None
+    vehicle_class: str | None = None
+    make: str | None = None
+    model: str | None = None
+    year_range: str | None = None
+    confidence: float | None = None
+    camera_id: str
+    detection_address: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    snapshot_path: str | None = None
+    plate_path: str | None = None
+    vehicle_path: str | None = None
+    composite_path: str | None = None
+    distance_m: float | None = None
+
+
+class DetectionSearchResponse(BaseModel):
+    address: str = ""
+    total: int
+    detections: list[DetectionSummary]
 
 # ---------------------------------------------------------------------------
 # Dependency: pull NavigationState from app.state
@@ -156,6 +193,8 @@ def start_navigation(body: StartNavRequest, request: Request):
         "radius_m": round(radius_m, 2),
     }
 
+    nav.gps_state.set_address(body.display_name)
+
     logger.info(
         "Navigation started → (%.6f, %.6f) %s  radius=%.0fft (%.1fm)",
         body.dest_lat, body.dest_lon, body.display_name, body.radius_ft, radius_m,
@@ -177,6 +216,7 @@ def stop_navigation(request: Request):
     nav.is_navigating = False
     nav.destination = None
     nav.current_route = None
+    nav.gps_state.clear_address()
 
     logger.info("Navigation stopped — pipeline ACTIVE")
     return {"status": "stopped"}
@@ -248,6 +288,66 @@ def get_targets(request: Request):
     ranked = nav.ranking_engine.rank_vehicles(dest["lat"], dest["lon"])
     return {"targets": [v.to_dict() for v in ranked[:10]]}
 
+
+
+@router.post("/detections/search", response_model=DetectionSearchResponse)
+def search_detections(body: DetectionSearchRequest, request: Request):
+    """Search detections by plate/vehicle/make/model and optional address proximity."""
+    nav = _nav(request)
+    if nav.repository is None:
+        return DetectionSearchResponse(address=body.address, total=0, detections=[])
+
+    detections: list[dict]
+    if body.address.strip():
+        try:
+            geo = nav.geocoder.geocode(body.address.strip())
+            detections = nav.repository.search_detections_near(
+                geo.lat,
+                geo.lon,
+                radius_m=body.radius_m,
+                plate_text=body.plate_text,
+                vehicle_class=body.vehicle_class,
+                make=body.make,
+                model=body.model,
+                limit=body.limit,
+            )
+        except GeocoderError:
+            detections = nav.repository.search_detections(
+                plate_text=body.plate_text,
+                vehicle_class=body.vehicle_class,
+                make=body.make,
+                model=body.model,
+                detection_address=body.address,
+                limit=body.limit,
+            )
+    else:
+        detections = nav.repository.search_detections(
+            plate_text=body.plate_text,
+            vehicle_class=body.vehicle_class,
+            make=body.make,
+            model=body.model,
+            detection_address=body.address,
+            limit=body.limit,
+        )
+
+    return DetectionSearchResponse(
+        address=body.address,
+        total=len(detections),
+        detections=[DetectionSummary(**d) for d in detections],
+    )
+
+
+@router.get("/detections/{detection_id}")
+def get_detection(detection_id: int, request: Request):
+    """Return full detection detail by ID."""
+    nav = _nav(request)
+    if nav.repository is None:
+        raise HTTPException(status_code=503, detail="repository not initialised")
+
+    row = nav.repository.get_detection_by_id(detection_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="detection not found")
+    return row
 
 @router.get("/status")
 def get_status(request: Request):

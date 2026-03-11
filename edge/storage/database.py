@@ -72,6 +72,7 @@ class Database:
             ("detections", "confidence",     "REAL"),
             ("detections", "latitude",       "REAL"),
             ("detections", "longitude",      "REAL"),
+            ("detections", "detection_address", "TEXT"),
             ("detections", "fingerprint",    "TEXT"),
         ]
         for table, column, col_type in new_columns:

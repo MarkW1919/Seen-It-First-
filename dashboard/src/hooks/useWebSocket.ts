@@ -10,7 +10,7 @@ const RECONNECT_DELAY_MS = 3000;
  *
  * @param onEvent  Called with each parsed WsEvent from the server.
  */
-export function useWebSocket(onEvent: (ev: WsEvent) => void) {
+export function useWebSocket(onEvent: (ev: WsEvent) => void, enabled = true) {
   const wsRef = useRef<WebSocket | null>(null);
   const onEventRef = useRef(onEvent);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -58,6 +58,7 @@ export function useWebSocket(onEvent: (ev: WsEvent) => void) {
   }, []);
 
   useEffect(() => {
+    if (!enabled) return;
     mountedRef.current = true;
     connect();
     return () => {
@@ -65,5 +66,5 @@ export function useWebSocket(onEvent: (ev: WsEvent) => void) {
       wsRef.current?.close();
       if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
     };
-  }, [connect]);
+  }, [connect, enabled]);
 }

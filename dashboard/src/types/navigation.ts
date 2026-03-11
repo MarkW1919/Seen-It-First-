@@ -57,3 +57,30 @@ export interface RankedVehicle {
 export type WsEvent =
   | { event: "ARRIVED"; lat: number; lon: number; destination: { lat: number; lon: number; display_name: string } | null }
   | { event: "STATUS"; navigating: boolean; arrived: boolean };
+
+
+export interface DetectionRecord {
+  id: number;
+  timestamp: number;
+  plate_text: string | null;
+  vehicle_class: string | null;
+  make: string | null;
+  model: string | null;
+  year_range: string | null;
+  confidence: number | null;
+  camera_id: string;
+  detection_address: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  snapshot_path: string | null;
+  plate_path: string | null;
+  vehicle_path: string | null;
+  composite_path: string | null;
+  distance_m?: number | null;
+}
+
+export interface DetectionSearchResponse {
+  address: string;
+  total: number;
+  detections: DetectionRecord[];
+}

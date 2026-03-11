@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS detections (
     -- GPS (operator position at detection time)
     latitude        REAL,
     longitude       REAL,
+    detection_address TEXT,
     -- Bounding box
     bbox_x1         INTEGER,
     bbox_y1         INTEGER,

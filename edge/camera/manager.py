@@ -59,6 +59,21 @@ class CameraManager:
     # Config loading
     # ------------------------------------------------------------------
 
+
+    def _as_int(self, value, default: int, field_name: str, cam_id: str) -> int:
+        """Best-effort int coercion with fallback logging."""
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            logger.warning(
+                "Camera %s has invalid %s=%r; using default=%d",
+                cam_id,
+                field_name,
+                value,
+                default,
+            )
+            return default
+
     def _load_config(self):
         """Load camera definitions from YAML config (dict format)."""
         if not self.config_path.exists():
@@ -74,6 +89,12 @@ class CameraManager:
 
         if not isinstance(raw, dict):
             logger.error("Camera config root must be a mapping: %s", self.config_path)
+        except (OSError, yaml.YAMLError):
+            logger.exception("Failed to parse camera config: %s", self.config_path)
+            return
+
+        if not isinstance(raw, dict):
+            logger.error("Invalid camera config root type: %s", type(raw).__name__)
             return
 
         cameras_section = raw.get("cameras", {})
@@ -86,31 +107,35 @@ class CameraManager:
             items = ((cam.get("id", f"cam{i}"), cam) for i, cam in enumerate(cameras_section) if isinstance(cam, dict))
         else:
             logger.error("'cameras' must be a mapping or list in %s", self.config_path)
+            logger.error("Invalid cameras section type: %s", type(cameras_section).__name__)
             return
 
         for cam_id, cam_def in items:
             if not isinstance(cam_def, dict):
                 logger.warning("Camera %s config is not a mapping, skipping", cam_id)
                 continue
+                logger.warning("Skipping camera %s due to invalid definition type: %s", cam_id, type(cam_def).__name__)
+                continue
+
             if not cam_def.get("enabled", True):
                 logger.info("Camera %s disabled, skipping", cam_id)
                 continue
 
             config = CameraConfig(
-                camera_id=cam_id,
-                name=cam_def.get("name", cam_id),
-                camera_type=cam_def.get("type", "csi"),
-                sensor_id=cam_def.get("sensor_id", 0),
+                camera_id=str(cam_id),
+                name=cam_def.get("name", str(cam_id)),
+                camera_type=str(cam_def.get("type", "csi")).lower(),
+                sensor_id=self._as_int(cam_def.get("sensor_id", 0), 0, "sensor_id", str(cam_id)),
                 uri=cam_def.get("uri", ""),
                 role=cam_def.get("role", ""),
                 housing=cam_def.get("housing", ""),
                 enabled=True,
-                width=cam_def.get("width", 1920),
-                height=cam_def.get("height", 1080),
-                fps=cam_def.get("fps", 30),
+                width=self._as_int(cam_def.get("width", 1920), 1920, "width", str(cam_id)),
+                height=self._as_int(cam_def.get("height", 1080), 1080, "height", str(cam_id)),
+                fps=self._as_int(cam_def.get("fps", 30), 30, "fps", str(cam_id)),
             )
-            self.cameras[cam_id] = CameraCapture(config, self.queue_size)
-            self._fps_window[cam_id] = deque()
+            self.cameras[str(cam_id)] = CameraCapture(config, self.queue_size)
+            self._fps_window[str(cam_id)] = deque()
 
         logger.info("CameraManager loaded %d enabled cameras", len(self.cameras))
 

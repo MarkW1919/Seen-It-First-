@@ -88,6 +88,8 @@ edge/
 
 models/              # Runtime model artifacts (generated, not in git)
 edge/models/         # Tracked docs/placeholders only (no runtime binaries)
+models/              # Runtime TensorRT/ONNX artifacts (generated locally)
+edge/models/         # Tracked documentation for expected model files
 systemd/             # systemd service file
 edge/ai_training_phase3/  # Phase 3 fine-tuning (not required for Phase 1)
 docs/                # Build rules and documentation
@@ -121,24 +123,53 @@ nano edge/camera/config.yaml
 python -m edge.main
 ```
 
-## Production Deployment
+### API Security Defaults
+
+- API binds to `127.0.0.1:8080` by default for single-user/local deployments.
+- To require auth on `/navigation/*` and `/ws`, set `api.auth_token` in `edge/config/system.yaml` and pass `X-API-Key` (or `Authorization: Bearer <token>`).
+- If you expose the API on LAN (`0.0.0.0`), also restrict `api.allowed_origins` and use firewall rules.
+## Preflight Before Enable
+
+Run the deployment preflight checker before enabling the service. It validates:
+
+- required config files exist
+- required model/engine paths from `edge/config/system.yaml`
+- writable runtime directories (`data/`, `logs/`)
+- camera config parse + enabled camera validity
 
 ```bash
-# Copy to /opt
-sudo cp -r . /opt/seen-it-first
-sudo useradd -r -s /bin/false sif
-sudo chown -R sif:sif /opt/seen-it-first
-
-# Install systemd service
-sudo cp systemd/seen-it-first-edge.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable seen-it-first-edge
-sudo systemctl start seen-it-first-edge
-
-# Check status
-sudo systemctl status seen-it-first-edge
-journalctl -u seen-it-first-edge -f
+python scripts/preflight_check.py \
+  --system-config edge/config/system.yaml \
+  --camera-config edge/camera/config.yaml
 ```
+
+The checker exits non-zero on required failures and prints actionable errors with exact missing keys/paths.
+
+## Production Deployment
+
+Use the installer script as the **canonical deployment path**:
+
+```bash
+# From repository root
+sudo ./scripts/install_edge_service.sh
+```
+
+Dry-run preview (no changes applied):
+
+```bash
+./scripts/install_edge_service.sh --dry-run
+```
+
+After installation:
+
+```bash
+sudo systemctl start seen-it-first-edge.service
+sudo systemctl status seen-it-first-edge.service
+sudo journalctl -u seen-it-first-edge.service -f
+```
+
+`seen-it-first-edge.service` runs as `Type=simple` without systemd watchdog heartbeats.
+The runtime logs this at startup as `Systemd watchdog mode: disabled (Type=simple, no heartbeat notifications)`.
 
 ## Night Vision
 
@@ -163,3 +194,41 @@ All thermal events logged to SQLite.
 | Vehicle detection | 12–15 FPS |
 | Hotlist alert latency | < 2 seconds |
 | Operating temp | Stable at 90°F+ ambient |
+
+## Secure Navigation API Configuration
+
+The FastAPI service now enforces authentication for all `/navigation/*` routes and `/ws`.
+
+### Example `edge/config/system.yaml` API block
+
+```yaml
+api:
+  host: "0.0.0.0"
+  port: 8080
+  environment: "production"  # fail-closed if allowed_origins is empty
+  allowed_origins:
+    - "https://dashboard.example.com"
+    - "https://ops.example.com"
+  auth:
+    enabled: true
+    api_key: "replace-with-long-random-secret"
+    bearer_token: ""  # optional alternative to api_key
+```
+
+### Dashboard connection requirements
+
+- HTTP requests to navigation endpoints **must** include one of:
+  - `X-API-Key: <api_key>`
+  - `Authorization: Bearer <bearer_token>`
+- WebSocket clients connecting to `/ws` must authenticate via either:
+  - Header: `X-API-Key: <api_key>`
+  - Header: `Authorization: Bearer <bearer_token>`
+  - Query parameter fallback (if your WS client cannot set headers):
+    - `ws://<edge-host>:8080/ws?api_key=<api_key>`
+    - `ws://<edge-host>:8080/ws?token=<bearer_token>`
+
+### CORS hardening behavior
+
+- `allow_origins=["*"]` is no longer allowed.
+- `api.allowed_origins` must be an explicit list of trusted dashboard origins.
+- When `api.environment: "production"`, startup fails if `allowed_origins` is empty.

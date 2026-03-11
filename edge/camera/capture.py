@@ -87,7 +87,7 @@ class CameraCapture:
 
     def _build_pipeline(self) -> str:
         cfg = self.config
-        if cfg.camera_type == "csi":
+        if cfg.camera_type.lower() == "csi":
             return build_csi_pipeline(cfg.sensor_id, cfg.width, cfg.height, cfg.fps)
         return build_rtsp_pipeline(cfg.uri)
 
