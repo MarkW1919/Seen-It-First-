@@ -348,6 +348,7 @@ class EdgeService:
             "Edge service running with %d camera(s): %s",
             len(active), ", ".join(active),
         )
+        logger.info("Systemd watchdog mode: disabled (Type=simple, no heartbeat notifications)")
 
         self._running = True
         self._run_loop()
