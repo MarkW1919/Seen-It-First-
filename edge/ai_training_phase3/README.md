@@ -1,5 +1,9 @@
 # Phase 3: Custom Model Fine-Tuning Pipeline
 
+**Not required for Phase 1 deployment.**
+
+Phase 1 uses pretrained models exclusively. This directory is reserved
+for Phase 3 custom training pipelines.
 Custom model training is NOT required for Phase 1 deployment. This directory is reserved for Phase 3 improvements.
 
 Phase 1 uses pretrained models exclusively.

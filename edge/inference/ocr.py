@@ -1,3 +1,9 @@
+"""
+License plate OCR using lightweight CRNN TensorRT engine.
+
+US plates only. No EU/International support in Phase 1.
+Character set restricted to A-Z 0-9.
+Validation regex: ^[A-Z0-9]{2,8}$
 """License plate OCR using PaddleOCR PP-OCRv4 TensorRT engine.
 
 This module is production-focused around pretrained models with lightweight
@@ -22,6 +28,29 @@ from edge.inference.plate_detector import PlateDetection
 
 logger = logging.getLogger(__name__)
 
+# US plate character set (A-Z 0-9 only, no EU/International)
+PLATE_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+# US plate validation: 2-8 alphanumeric characters
+US_PLATE_REGEX = re.compile(r"^[A-Z0-9]{2,8}$")
+CHAR_TO_IDX = {c: i for i, c in enumerate(PLATE_CHARS)}
+IDX_TO_CHAR = {i: c for i, c in enumerate(PLATE_CHARS)}
+
+# Common OCR confusions: map wrong → correct
+CONFUSION_MAP = {
+    "O": "0",  # letter O → digit 0 when in digit context
+    "0": "O",  # digit 0 → letter O when in letter context
+    "I": "1",
+    "1": "I",
+    "S": "5",
+    "5": "S",
+    "B": "8",
+    "8": "B",
+    "Z": "2",
+    "2": "Z",
+    "G": "6",
+    "6": "G",
+}
 # ---------------------------------------------------------------------------
 # PaddleOCR PP-OCRv4 English character set
 # Standard en_dict.txt: 96 printable ASCII chars (space … ~), blank = index 96
@@ -235,6 +264,10 @@ class PlateOCR:
         """
         Rule-based cleaning for US license plates.
 
+        - Uppercase normalization
+        - Strip spaces and special characters
+        - Enforce 2-8 character constraint
+        - Validate against US plate regex: ^[A-Z0-9]{2,8}$
         - Uppercase normalization.
         - Strip spaces and non-alphanumeric characters.
         """
