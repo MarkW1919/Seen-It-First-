@@ -162,3 +162,41 @@ All thermal events logged to SQLite.
 | Vehicle detection | 12–15 FPS |
 | Hotlist alert latency | < 2 seconds |
 | Operating temp | Stable at 90°F+ ambient |
+
+## Secure Navigation API Configuration
+
+The FastAPI service now enforces authentication for all `/navigation/*` routes and `/ws`.
+
+### Example `edge/config/system.yaml` API block
+
+```yaml
+api:
+  host: "0.0.0.0"
+  port: 8080
+  environment: "production"  # fail-closed if allowed_origins is empty
+  allowed_origins:
+    - "https://dashboard.example.com"
+    - "https://ops.example.com"
+  auth:
+    enabled: true
+    api_key: "replace-with-long-random-secret"
+    bearer_token: ""  # optional alternative to api_key
+```
+
+### Dashboard connection requirements
+
+- HTTP requests to navigation endpoints **must** include one of:
+  - `X-API-Key: <api_key>`
+  - `Authorization: Bearer <bearer_token>`
+- WebSocket clients connecting to `/ws` must authenticate via either:
+  - Header: `X-API-Key: <api_key>`
+  - Header: `Authorization: Bearer <bearer_token>`
+  - Query parameter fallback (if your WS client cannot set headers):
+    - `ws://<edge-host>:8080/ws?api_key=<api_key>`
+    - `ws://<edge-host>:8080/ws?token=<bearer_token>`
+
+### CORS hardening behavior
+
+- `allow_origins=["*"]` is no longer allowed.
+- `api.allowed_origins` must be an explicit list of trusted dashboard origins.
+- When `api.environment: "production"`, startup fails if `allowed_origins` is empty.

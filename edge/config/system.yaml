@@ -136,3 +136,15 @@ navigation:
 api:
   host: "0.0.0.0"
   port: 8080
+  # Set to production in deployed environments to enforce explicit origins.
+  environment: "development"
+  # Never use "*". In production, this list must contain one or more trusted dashboard origins.
+  allowed_origins:
+    - "http://localhost:5173"
+  auth:
+    # Enable API auth for /navigation/* and /ws.
+    enabled: true
+    # Option 1: static API key sent via X-API-Key header (or ?api_key= for /ws).
+    api_key: "change-me-api-key"
+    # Option 2: bearer token sent via Authorization: Bearer <token> (or ?token= for /ws).
+    bearer_token: ""
