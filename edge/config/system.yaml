@@ -13,6 +13,7 @@
 
 system:
   device: "jetson-orin-nano-super"
+  profile: "production"  # development or production
   log_level: "INFO"
   log_dir: "logs"
   database_path: "data/seen_it_first.db"
@@ -124,14 +125,36 @@ storage:
   snapshot_dir: "data/snapshots"
 
 navigation:
+  # Navigation mode:
+  #   offline - no external lookup; geocode/route APIs are disabled.
+  #   hybrid  - self-hosted endpoints are used; public endpoints optional.
+  #   online  - remote lookups allowed (development/testing only).
+  mode: "hybrid"
+
+  # If false, public internet geocoder/router endpoints are blocked.
+  # Keep false in production unless explicitly approved.
+  allow_public_endpoints: false
+
   # Arrival geofence radius — pipeline activates when vehicle is this close
   arrival_radius_m: 80
-  # OpenStreetMap Nominatim geocoder (replace with self-hosted for production)
-  nominatim_url: "https://nominatim.openstreetmap.org"
-  # OSRM routing (replace with self-hosted for production)
-  osrm_url: "https://router.project-osrm.org"
+
+  # Self-hosted endpoints (recommended default for production profile)
+  nominatim_url: "http://127.0.0.1:8088/nominatim/search"
+  osrm_url: "http://127.0.0.1:5000"
+
+  # Optional public fallbacks (used only when allow_public_endpoints=true)
+  public_nominatim_url: "https://nominatim.openstreetmap.org/search"
+  public_osrm_url: "https://router.project-osrm.org"
+
   # Local disk cache for geocode results
   geocode_cache_path: "data/geocode_cache.json"
+
+  # HTTP client hardening and policy compliance
+  timeout_sec: 10
+  max_retries: 3
+  backoff_base_sec: 0.75
+  user_agent: "Seen-It-First-Edge/1.0 (edge-navigation; ops@example.local)"
+  min_request_interval_sec: 1.1
 
 api:
   host: "0.0.0.0"
