@@ -8,15 +8,18 @@ Single-process edge service that orchestrates:
 4. Local SQLite storage
 5. Console + audio alerts
 6. Thermal monitoring + adaptive throttling
+7. Navigation API server (FastAPI/uvicorn, port 8080)
 """
 
 import logging
 import os
 import signal
 import sys
+import threading
 import time
 from pathlib import Path
 
+import uvicorn
 import yaml
 
 from edge.camera.manager import CameraManager
@@ -24,7 +27,13 @@ from edge.inference.vehicle_detector import VehicleDetector
 from edge.inference.plate_detector import PlateDetector
 from edge.inference.ocr import PlateOCR
 from edge.inference.classifier import VehicleClassifier
+from edge.inference.vehicle_classifier import VehicleClassifierModel
+from edge.inference.vehicle_color import VehicleColorDetector
+from edge.inference.vehicle_reid import VehicleReID
+from edge.inference.vehicle_fingerprint import VehicleFingerprintGenerator
 from edge.inference.scheduler import InferenceScheduler
+from edge.inference.events import EventPublisher
+from edge.inference.fusion import DetectionFusionEngine
 from edge.hotlist.loader import HotlistLoader
 from edge.hotlist.matcher import HotlistMatcher
 from edge.storage.database import Database
@@ -32,11 +41,24 @@ from edge.storage.repository import DetectionRepository
 from edge.system.thermal import ThermalMonitor
 from edge.system.monitoring import SystemMonitor
 from edge.system.alerts import AlertManager
+from edge.evidence.capture import SnapshotCapture
+from edge.evidence.storage import EvidenceStorage
+from edge.evidence.cleanup import MediaRetentionManager
+from edge.ranking.engine import RankingEngine
+from edge.api.state import GpsState
 
 logger = logging.getLogger("seen-it-first")
 
 # Base directory (repo root)
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Canonical runtime model roots
+MODELS_ROOT = BASE_DIR / "models"
+ONNX_MODELS_ROOT = MODELS_ROOT / "onnx"
+
+
+def _is_public_navigation_endpoint(url: str) -> bool:
+    return "openstreetmap.org" in url or "project-osrm.org" in url
 
 
 def load_config(config_path: str | None = None) -> dict:
@@ -105,6 +127,13 @@ class EdgeService:
         self.scheduler: InferenceScheduler | None = None
         self.hotlist_loader: HotlistLoader | None = None
         self.hotlist_matcher: HotlistMatcher | None = None
+        self.event_publisher: EventPublisher | None = None
+        self.fusion_engine: DetectionFusionEngine | None = None
+        self.snapshot_capture: SnapshotCapture | None = None
+        self.evidence_storage: EvidenceStorage | None = None
+        self.retention_manager: MediaRetentionManager | None = None
+        self.ranking_engine: RankingEngine | None = None
+        self.gps_state: GpsState | None = None
         self.db: Database | None = None
         self.repo: DetectionRepository | None = None
         self.thermal: ThermalMonitor | None = None
@@ -143,9 +172,43 @@ class EdgeService:
         inf_config = self.config.get("inference", {})
 
         vehicle_det = VehicleDetector(inf_config.get("vehicle_detection", {}))
-        plate_det = PlateDetector(inf_config.get("plate_detection", {}))
-        ocr = PlateOCR(inf_config.get("ocr", {}))
-        classifier = VehicleClassifier(inf_config.get("classifier", {}))
+        plate_det   = PlateDetector(inf_config.get("plate_detection", {}))
+        ocr_cfg = dict(inf_config.get("ocr", {}))
+        ocr_cfg.update(self.config.get("night_vision", {}))
+        ocr         = PlateOCR(ocr_cfg)
+
+        # Vehicle intelligence sub-models (all ONNX-based, graceful fallback)
+        models_dir = str(ONNX_MODELS_ROOT)
+        clf_cfg = inf_config.get("classifier", {})
+
+        # Merge defaults with config overrides so model_path is always present.
+        clf_model_cfg = {
+            "model_path": f"{models_dir}/vehicle_make_model_classifier.onnx",
+            **(inf_config.get("vehicle_classifier", {}) or {}),
+        }
+        color_cfg = {
+            "model_path": f"{models_dir}/vehicle_color_model.onnx",
+            **(inf_config.get("vehicle_color", {}) or {}),
+        }
+        reid_cfg = {
+            "model_path": f"{models_dir}/vehicle_embedding_model.onnx",
+            **(inf_config.get("vehicle_reid", {}) or {}),
+        }
+
+        self._preflight_model_files(inf_config, clf_model_cfg, color_cfg, reid_cfg)
+
+        clf_model   = VehicleClassifierModel(clf_model_cfg)
+        color_det   = VehicleColorDetector(color_cfg)
+        reid_model  = VehicleReID(reid_cfg)
+        fp_gen      = VehicleFingerprintGenerator()
+
+        classifier = VehicleClassifier(
+            config=clf_cfg,
+            classifier_model=clf_model,
+            color_detector=color_det,
+            reid_model=reid_model,
+            fingerprint_gen=fp_gen,
+        )
 
         # Load models (non-fatal if models not present yet)
         models_loaded = True
@@ -164,18 +227,7 @@ class EdgeService:
                 "Some models failed to load. Pipeline will run with available models."
             )
 
-        # Scheduler
-        sched_config = self.config.get("scheduling", {})
-        self.scheduler = InferenceScheduler(sched_config)
-        self.scheduler.set_models(
-            vehicle_detector=vehicle_det,
-            plate_detector=plate_det,
-            ocr=ocr,
-            classifier=classifier,
-            tracker_config=inf_config.get("tracker", {}),
-        )
-
-        # Hotlist
+        # Hotlist (created before scheduler so fusion can use it)
         hotlist_config = self.config.get("hotlist", {})
         hotlist_path = str(BASE_DIR / hotlist_config.get("file_path", "data/hotlist.csv"))
         self.hotlist_loader = HotlistLoader(hotlist_path)
@@ -185,17 +237,194 @@ class EdgeService:
             cooldown_sec=hotlist_config.get("cooldown_sec", 60),
         )
 
+        # GPS state (written by API thread, read by inference thread)
+        self.gps_state = GpsState()
+
+        # Ranking engine (written by inference thread, read by API thread)
+        self.ranking_engine = RankingEngine(hotlist_matcher=self.hotlist_matcher)
+
+        # Event publisher (ws_manager set later in _start_api_server)
+        self.event_publisher = EventPublisher()
+
+        # Evidence capture and storage
+        evidence_cfg = self.config.get("evidence", {})
+        evidence_root = str(BASE_DIR / evidence_cfg.get("root", "data/evidence"))
+        self.snapshot_capture = SnapshotCapture(
+            evidence_root=evidence_root,
+            jpeg_quality=evidence_cfg.get("jpeg_quality", 85),
+        )
+        self.evidence_storage = EvidenceStorage(self.repo)
+
+        # Detection fusion engine
+        self.fusion_engine = DetectionFusionEngine(
+            event_publisher=self.event_publisher,
+            hotlist_matcher=self.hotlist_matcher,
+            snapshot_capture=self.snapshot_capture,
+            evidence_storage=self.evidence_storage,
+            ranking_engine=self.ranking_engine,
+        )
+
+        # Scheduler
+        sched_config = dict(self.config.get("scheduling", {}))
+        sched_config["brightness_threshold"] = self.config.get("night_vision", {}).get("brightness_threshold", 60)
+        self.scheduler = InferenceScheduler(sched_config)
+        self.scheduler.set_camera_manager(self.camera_manager)
+        self.scheduler.set_models(
+            vehicle_detector=vehicle_det,
+            plate_detector=plate_det,
+            ocr=ocr,
+            classifier=classifier,
+            tracker_config=inf_config.get("tracker", {}),
+            fusion_engine=self.fusion_engine,
+            event_publisher=self.event_publisher,
+        )
+
+        # Wire GPS state into the pipeline so detections carry operator position
+        if hasattr(self.scheduler, "pipeline") and self.scheduler.pipeline is not None:
+            self.scheduler.pipeline.set_gps_state(self.gps_state)
+
         # Alert manager
         self.alert_manager = AlertManager(hotlist_config)
 
+        # Media retention manager (background cleanup thread)
+        self.retention_manager = MediaRetentionManager(
+            evidence_root=evidence_root,
+            retention_days=evidence_cfg.get("retention_days", 30),
+        )
+
+        # Navigation API server (FastAPI + uvicorn, daemon thread)
+        # Also wires ws_manager into event_publisher
+        self._warn_on_navigation_endpoint_risk()
+        self._start_api_server()
+
+        logger.info("CameraManager started")
+
         logger.info("Initialization complete")
         return True
+
+
+    def _warn_on_navigation_endpoint_risk(self):
+        """Warn when production profile uses public navigation endpoints."""
+        sys_cfg = self.config.get("system", {})
+        nav_cfg = self.config.get("navigation", {})
+
+        profile = str(sys_cfg.get("profile", "production")).lower()
+        mode = str(nav_cfg.get("mode", "hybrid")).lower()
+        allow_public = bool(nav_cfg.get("allow_public_endpoints", False))
+
+        nominatim_url = str(nav_cfg.get("nominatim_url", ""))
+        osrm_url = str(nav_cfg.get("osrm_url", ""))
+        public_nom = str(nav_cfg.get("public_nominatim_url", ""))
+        public_osrm = str(nav_cfg.get("public_osrm_url", ""))
+
+        using_public = any([
+            _is_public_navigation_endpoint(nominatim_url),
+            _is_public_navigation_endpoint(osrm_url),
+            (mode == "online" and _is_public_navigation_endpoint(public_nom)),
+            (mode == "online" and _is_public_navigation_endpoint(public_osrm)),
+        ])
+
+        if profile == "production" and (allow_public or using_public):
+            logger.warning(
+                "Production profile is configured with public navigation endpoints or fallbacks. "
+                "Use self-hosted endpoints and keep navigation.allow_public_endpoints=false unless explicitly approved."
+            )
+    def _preflight_model_files(
+        self,
+        inf_config: dict,
+        clf_model_cfg: dict,
+        color_cfg: dict,
+        reid_cfg: dict,
+    ) -> None:
+        """Log missing model artifacts at startup using absolute paths."""
+
+        expected_paths = [
+            inf_config.get("vehicle_detection", {}).get("model_path"),
+            inf_config.get("plate_detection", {}).get("model_path"),
+            inf_config.get("ocr", {}).get("model_path"),
+            inf_config.get("classifier", {}).get("model_path"),
+            clf_model_cfg.get("model_path"),
+            color_cfg.get("model_path"),
+            reid_cfg.get("model_path"),
+        ]
+
+        # Label map is expected next to the make/model ONNX classifier.
+        clf_model_path = self._resolve_model_path(clf_model_cfg.get("model_path"))
+        if clf_model_path is not None:
+            expected_paths.append(str(clf_model_path.parent / "vehicle_make_model_labels.json"))
+
+        missing: set[Path] = set()
+        for raw_path in expected_paths:
+            abs_path = self._resolve_model_path(raw_path)
+            if abs_path is None:
+                continue
+            if not abs_path.exists():
+                missing.add(abs_path)
+
+        if not missing:
+            logger.info("Model preflight: all expected model artifacts found")
+            return
+
+        missing_sorted = sorted(missing)
+        logger.warning("Model preflight: %d expected files missing", len(missing_sorted))
+        for missing_path in missing_sorted:
+            logger.warning("Model preflight missing file: %s", missing_path)
+
+    def _resolve_model_path(self, raw_path: str | None) -> Path | None:
+        """Resolve raw model paths (relative/absolute/~) into absolute paths."""
+        if not raw_path:
+            return None
+
+        path = Path(raw_path).expanduser()
+        if not path.is_absolute():
+            path = BASE_DIR / path
+        return path.resolve()
+
+    def _start_api_server(self):
+        """Start the FastAPI navigation server in a daemon thread."""
+        from edge.api.app import create_app, ConnectionManager
+        nav_cfg = self.config.get("navigation", {})
+        api_cfg = self.config.get("api", {})
+
+        # Create shared ConnectionManager so event_publisher can broadcast
+        # to WebSocket clients from the inference thread.
+        ws_manager = ConnectionManager()
+        if self.event_publisher is not None:
+            self.event_publisher.set_ws_manager(ws_manager)
+
+        api_app = create_app(
+            scheduler=self.scheduler,
+            config=nav_cfg,
+            api_config=api_cfg,
+            ws_manager=ws_manager,
+            event_publisher=self.event_publisher,
+            ranking_engine=self.ranking_engine,
+            gps_state=self.gps_state,
+            repository=self.repo,
+        )
+
+        host = api_cfg.get("host", "0.0.0.0")
+        port = api_cfg.get("port", 8080)
+
+        api_thread = threading.Thread(
+            target=uvicorn.run,
+            args=(api_app,),
+            kwargs={"host": host, "port": port, "log_level": "warning"},
+            daemon=True,
+            name="nav-api-server",
+        )
+        api_thread.start()
+        logger.info("Navigation API server started on %s:%d", host, port)
 
     def start(self):
         """Start cameras and begin processing."""
         # Register signal handlers
         signal.signal(signal.SIGTERM, self._signal_handler)
         signal.signal(signal.SIGINT, self._signal_handler)
+
+        # Start media retention background thread
+        if self.retention_manager:
+            self.retention_manager.start()
 
         # Start cameras
         results = self.camera_manager.start_all()
@@ -214,6 +443,7 @@ class EdgeService:
             "Edge service running with %d camera(s): %s",
             len(active), ", ".join(active),
         )
+        logger.info("Systemd watchdog mode: disabled (Type=simple, no heartbeat notifications)")
 
         self._running = True
         self._run_loop()
@@ -245,7 +475,6 @@ class EdgeService:
 
             # Process frames from all cameras
             frames = self.camera_manager.get_latest_frames()
-
             for cam_id, packet in frames.items():
                 if packet is None:
                     continue
@@ -253,31 +482,6 @@ class EdgeService:
                 result = self.scheduler.process_frame(packet)
                 if result is None:
                     continue  # frame skipped (rate limiting)
-
-                # Save detections with plate info
-                for ocr_result in result.ocr_results:
-                    plate = ocr_result.plate_detection
-                    vehicle = plate.vehicle_box
-                    classification = result.classifications.get(None)
-
-                    self.repo.save_detection(
-                        result,
-                        plate_text=ocr_result.text,
-                        plate_confidence=ocr_result.confidence,
-                        vehicle_class=vehicle.class_name,
-                        vehicle_color=classification.color if classification else "",
-                        year_bucket=classification.year_bucket if classification else "",
-                        bbox=(vehicle.x1, vehicle.y1, vehicle.x2, vehicle.y2),
-                    )
-
-                # Hotlist check
-                if result.ocr_results:
-                    alerts = self.hotlist_matcher.check(
-                        result.ocr_results, cam_id,
-                    )
-                    for alert in alerts:
-                        self.repo.save_alert(alert)
-                        self.alert_manager.fire_alert(alert)
 
             # Periodic hotlist reload check
             if self._loop_count % 500 == 0:
@@ -352,6 +556,12 @@ class EdgeService:
                 self.scheduler.ocr.release()
             if self.scheduler.classifier:
                 self.scheduler.classifier.release()
+
+        if self.snapshot_capture:
+            self.snapshot_capture.shutdown(wait=True)
+
+        if self.retention_manager:
+            self.retention_manager.stop()
 
         if self.db:
             self.db.close()

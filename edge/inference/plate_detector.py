@@ -28,6 +28,12 @@ class PlateDetection:
     confidence: float
     vehicle_box: VehicleDetection  # parent vehicle
 
+    def to_dict(self) -> dict:
+        return {
+            "bbox": [self.x1, self.y1, self.x2, self.y2],
+            "confidence": round(self.confidence, 4),
+        }
+
 
 class PlateDetector:
     """
@@ -53,6 +59,10 @@ class PlateDetector:
 
     def load(self) -> bool:
         return self.engine.load()
+
+    @property
+    def is_loaded(self) -> bool:
+        return self.engine.is_loaded
 
     def detect(
         self, frame: np.ndarray, vehicles: list[VehicleDetection]

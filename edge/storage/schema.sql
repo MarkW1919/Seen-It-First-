@@ -11,11 +11,27 @@ CREATE TABLE IF NOT EXISTS detections (
     vehicle_class   TEXT,
     vehicle_color   TEXT,
     year_bucket     TEXT,
+    -- Extended classification fields
+    make            TEXT,
+    model           TEXT,
+    year_range      TEXT,
+    confidence      REAL,
+    -- GPS (operator position at detection time)
+    latitude        REAL,
+    longitude       REAL,
+    detection_address TEXT,
+    -- Bounding box
     bbox_x1         INTEGER,
     bbox_y1         INTEGER,
     bbox_x2         INTEGER,
     bbox_y2         INTEGER,
+    -- Vehicle fingerprint (type-make-model-year-color-hash)
+    fingerprint     TEXT,
+    -- Evidence image paths
     snapshot_path   TEXT,
+    vehicle_path    TEXT,
+    plate_path      TEXT,
+    composite_path  TEXT,
     night_mode      INTEGER DEFAULT 0,
     created_at      TEXT    DEFAULT (datetime('now'))
 );

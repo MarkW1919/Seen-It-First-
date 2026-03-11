@@ -44,6 +44,8 @@ class Database:
             else:
                 logger.warning("Schema file not found: %s", SCHEMA_PATH)
 
+            self._run_migrations(conn)
+
             self._initialized = True
             logger.info("Database initialized: %s", self.db_path)
             return True
@@ -51,6 +53,42 @@ class Database:
         except sqlite3.Error:
             logger.exception("Database initialization failed")
             return False
+
+    def _run_migrations(self, conn: sqlite3.Connection):
+        """
+        Apply additive schema migrations to existing databases.
+
+        Each ALTER TABLE is wrapped in a try/except so the migration is
+        idempotent — running against a freshly created database (where the
+        columns already exist from schema.sql) is a safe no-op.
+        """
+        new_columns = [
+            ("detections", "vehicle_path",   "TEXT"),
+            ("detections", "plate_path",     "TEXT"),
+            ("detections", "composite_path", "TEXT"),
+            ("detections", "make",           "TEXT"),
+            ("detections", "model",          "TEXT"),
+            ("detections", "year_range",     "TEXT"),
+            ("detections", "confidence",     "REAL"),
+            ("detections", "latitude",       "REAL"),
+            ("detections", "longitude",      "REAL"),
+            ("detections", "detection_address", "TEXT"),
+            ("detections", "fingerprint",    "TEXT"),
+        ]
+        for table, column, col_type in new_columns:
+            try:
+                conn.execute(
+                    f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"
+                )
+                logger.info("Migration: added column %s.%s", table, column)
+            except sqlite3.OperationalError as exc:
+                if "duplicate column name" in str(exc).lower():
+                    logger.debug("Migration skipped: column exists %s.%s", table, column)
+                msg = str(exc).lower()
+                if "duplicate column name" in msg:
+                    continue
+                logger.exception("Migration failed for %s.%s", table, column)
+                raise
 
     def _get_connection(self) -> sqlite3.Connection:
         """Get or create a thread-local connection."""

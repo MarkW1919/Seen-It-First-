@@ -1,39 +1,41 @@
-# Camera Configuration
-# Define each camera's connection and processing settings
+# Camera Configuration — Jetson Orin Nano Super
+# Four CSI cameras across two housings.
+# sensor_id maps to physical CSI port (0–3).
 
 cameras:
-  - id: "cam_0"
-    name: "Front Left"
-    uri: "rtsp://192.168.1.100:554/stream1"
-    type: "rtsp"  # rtsp | csi
+
+  cam1:
+    sensor_id: 0
+    role: lpr          # long-range license-plate recognition
+    housing: front
+    width: 1920
+    height: 1080
+    fps: 30
     enabled: true
+
+  cam2:
+    sensor_id: 1
+    role: wide         # wide-angle vehicle classification
+    housing: front
     width: 1920
     height: 1080
     fps: 30
-
-  - id: "cam_1"
-    name: "Front Right"
-    uri: "rtsp://192.168.1.101:554/stream1"
-    type: "rtsp"
     enabled: true
-    width: 1920
-    height: 1080
-    fps: 30
 
-  - id: "cam_2"
-    name: "Rear Left"
-    uri: "rtsp://192.168.1.102:554/stream1"
-    type: "rtsp"
-    enabled: false
+  cam3:
+    sensor_id: 2
+    role: lpr
+    housing: rear
     width: 1920
     height: 1080
     fps: 30
+    enabled: true
 
-  - id: "cam_3"
-    name: "Rear Right"
-    uri: "rtsp://192.168.1.103:554/stream1"
-    type: "rtsp"
-    enabled: false
+  cam4:
+    sensor_id: 3
+    role: wide
+    housing: rear
     width: 1920
     height: 1080
     fps: 30
+    enabled: true

@@ -17,8 +17,16 @@ from edge.inference.tensorrt_utils import TRTEngine
 logger = logging.getLogger(__name__)
 
 # COCO class IDs for vehicles
-VEHICLE_CLASS_IDS = {2, 3, 5, 7}  # car, motorcycle, bus, truck
-VEHICLE_CLASS_NAMES = {2: "car", 3: "motorcycle", 5: "bus", 7: "truck"}
+# 2=car, 3=motorcycle, 5=bus, 7=truck
+# Note: COCO has no separate pickup/SUV/van — fine-grained type comes from
+# the downstream VehicleClassifierModel.
+VEHICLE_CLASS_IDS = {2, 3, 5, 7}
+VEHICLE_CLASS_NAMES = {
+    2: "car",
+    3: "motorcycle",
+    5: "van",      # bus → van (most detections in LPR context are vans/shuttles)
+    7: "truck",    # covers pickup, semi-truck, flatbed
+}
 
 
 @dataclass
@@ -31,6 +39,13 @@ class VehicleDetection:
     confidence: float
     class_id: int
     class_name: str
+
+    def to_dict(self) -> dict:
+        return {
+            "bbox": [self.x1, self.y1, self.x2, self.y2],
+            "confidence": round(self.confidence, 4),
+            "class": self.class_name,
+        }
 
 
 class VehicleDetector:
@@ -57,6 +72,10 @@ class VehicleDetector:
     def load(self) -> bool:
         """Load the TensorRT engine."""
         return self.engine.load()
+
+    @property
+    def is_loaded(self) -> bool:
+        return self.engine.is_loaded
 
     def detect(self, frame: np.ndarray) -> list[VehicleDetection]:
         """

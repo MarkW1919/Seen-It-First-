@@ -3,16 +3,17 @@
 #
 # MODEL STRATEGY (Phase 1):
 #   All models are PRETRAINED. No custom training or fine-tuning required.
-#   - YOLOv8n: COCO pretrained (vehicle detection)
-#   - YOLOv8s: Pretrained US-plate detection model
-#   - CRNN: Pretrained OCR model
-#   - EfficientNet-Lite0: Pretrained classifier
+#   - YOLOv8n:     COCO pretrained (vehicle detection)
+#   - YOLOv8n-LP:  Pretrained US-plate detection model
+#   - PP-OCRv4:    PaddleOCR English recognition model
+#   - YOLOv8n-cls: ImageNet pretrained (vehicle classification)
 #   Custom fine-tuning pipelines are deferred to Phase 3.
 #
 # SCOPE: US plates only. No EU/International support.
 
 system:
   device: "jetson-orin-nano-super"
+  profile: "production"  # development or production
   log_level: "INFO"
   log_dir: "logs"
   database_path: "data/seen_it_first.db"
@@ -32,7 +33,7 @@ inference:
   frame_skip_enabled: true
 
   vehicle_detection:
-    model_path: "models/vehicle/yolov8n.engine"
+    model_path: "models/vehicle/vehicle.engine"  # YOLOv8n COCO pretrained
     input_size: 640
     confidence_threshold: 0.45
     nms_threshold: 0.5
@@ -43,7 +44,7 @@ inference:
     # DO NOT upgrade to YOLOv8s/m/l - GPU budget locked
 
   plate_detection:
-    model_path: "models/plate/yolov8s_plate.engine"
+    model_path: "models/plate/plate.engine"  # YOLOv8n-LP US-plate pretrained
     input_size: 640
     confidence_threshold: 0.50
     nms_threshold: 0.4
@@ -54,9 +55,9 @@ inference:
     # DO NOT upgrade to YOLOv8m/l - GPU budget locked
 
   ocr:
-    model_path: "models/ocr/crnn_plate.engine"
-    input_width: 200
-    input_height: 64
+    model_path: "models/ocr/ocr.engine"  # PaddleOCR PP-OCRv4 English rec
+    input_width: 320    # PP-OCRv4 rec: W=320 (fixed for plate crops)
+    input_height: 48    # PP-OCRv4 rec: H=48
     confidence_threshold: 0.60
     min_plate_chars: 2
     max_plate_chars: 8
@@ -64,13 +65,17 @@ inference:
     pretrained: true  # Pretrained CRNN, no custom training needed
     charset: "A-Z0-9"  # US plates only
     validation_regex: "^[A-Z0-9]{2,8}$"
+    pretrained: true  # Pretrained PP-OCRv4, no custom training needed
+    charset: "A-Z0-9"  # Post-processing validates US plates only
+    validation_regex: "^[A-Z0-9]{2,8}$"
+    enable_ambiguity_correction: true  # Contextual O/0, I/1, S/5 cleanup
     # Budget: ~30 MB VRAM
 
   classifier:
-    model_path: "models/classifier/efficientnet_lite0.engine"
+    model_path: "models/classifier/classifier.engine"  # YOLOv8n-cls ImageNet
     input_size: 224
-    precision: "int8"
-    pretrained: true  # Pretrained EfficientNet-Lite0, no custom training needed
+    precision: "fp16"
+    pretrained: true  # ImageNet pretrained YOLOv8n-cls, no custom training needed
     # Budget: ~15 MB VRAM
 
   tracker:
@@ -97,6 +102,14 @@ thermal:
   cooldown_fps_2: 8
   zone_path: "/sys/devices/virtual/thermal/thermal_zone0/temp"
 
+evidence_selection:
+  # Cross-camera arbitration weights for choosing the best plate evidence frame
+  weight_ocr: 0.45
+  weight_plate_area: 0.20
+  weight_sharpness: 0.20
+  weight_exposure: 0.10
+  night_bonus: 0.05
+
 night_vision:
   brightness_threshold: 60  # histogram mean below this = night mode
   clahe_clip_limit: 3.0
@@ -114,3 +127,44 @@ storage:
   max_detections: 1000000
   vacuum_interval_hours: 24
   snapshot_dir: "data/snapshots"
+
+navigation:
+  # Navigation mode:
+  #   offline - no external lookup; geocode/route APIs are disabled.
+  #   hybrid  - self-hosted endpoints are used; public endpoints optional.
+  #   online  - remote lookups allowed (development/testing only).
+  mode: "hybrid"
+
+  # If false, public internet geocoder/router endpoints are blocked.
+  # Keep false in production unless explicitly approved.
+  allow_public_endpoints: false
+
+  # Arrival geofence radius — pipeline activates when vehicle is this close
+  arrival_radius_m: 80
+
+  # Self-hosted endpoints (recommended default for production profile)
+  nominatim_url: "http://127.0.0.1:8088/nominatim/search"
+  osrm_url: "http://127.0.0.1:5000"
+
+  # Optional public fallbacks (used only when allow_public_endpoints=true)
+  public_nominatim_url: "https://nominatim.openstreetmap.org/search"
+  public_osrm_url: "https://router.project-osrm.org"
+
+  # Local disk cache for geocode results
+  geocode_cache_path: "data/geocode_cache.json"
+
+  # HTTP client hardening and policy compliance
+  timeout_sec: 10
+  max_retries: 3
+  backoff_base_sec: 0.75
+  user_agent: "Seen-It-First-Edge/1.0 (edge-navigation; ops@example.local)"
+  min_request_interval_sec: 1.1
+
+api:
+  host: "127.0.0.1"
+  port: 8080
+  # Optional shared secret for /navigation/* and /ws (empty disables auth)
+  auth_token: ""
+  # Restrict browser origins for dashboard/API calls
+  allowed_origins:
+    - "http://localhost:5173"
