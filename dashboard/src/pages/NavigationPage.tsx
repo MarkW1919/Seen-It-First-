@@ -1,14 +1,18 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MapContainer, TileLayer, Marker, Polyline, Popup, useMap } from "react-leaflet";
 import { icon, LatLngTuple } from "leaflet";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { TargetList } from "../components/TargetList";
+import { PREVIEW_ALERTS, type PreviewAlert } from "../mock/previewAlerts";
 import type {
   GeocodeResponse,
   RouteResponse,
   NavStatus,
   WsEvent,
+  RankedVehicle,
+  DetectionSearchResponse,
+  DetectionRecord,
 } from "../types/navigation";
 
 // ---------------------------------------------------------------------------
@@ -80,11 +84,101 @@ function formatDuration(s: number): string {
   return m < 60 ? `${m} min` : `${Math.floor(m / 60)}h ${m % 60}min`;
 }
 
+
+type PreviewMode = "base" | "route" | "arrived";
+
+const PREVIEW_ROUTE: RouteResponse = {
+  distance_m: 4820,
+  duration_s: 660,
+  eta_iso: "2026-01-01T14:35:00.000Z",
+  polyline: [
+    [37.4232, -122.0866],
+    [37.4225, -122.0848],
+    [37.4214, -122.0831],
+    [37.4199, -122.0817],
+    [37.4182, -122.0802],
+  ],
+};
+
+const PREVIEW_TARGETS: RankedVehicle[] = [
+  {
+    vehicle_id: "veh-top-001",
+    vehicle_type: "suv",
+    make: "ford",
+    model: "explorer",
+    color: "black",
+    year_range: "2018-2021",
+    plate: "8ABC123",
+    confidence: 0.92,
+    distance_ft: 128,
+    hotlist_match: true,
+    score: 98.4,
+    latitude: 37.4221,
+    longitude: -122.0841,
+    timestamp: Date.now(),
+    camera_id: "cam-front-1",
+    fingerprint: "d9f30eab82aa4a45bb4f451f9f0f1307",
+  },
+  {
+    vehicle_id: "veh-002",
+    vehicle_type: "sedan",
+    make: "toyota",
+    model: "camry",
+    color: "silver",
+    year_range: "2017-2019",
+    plate: null,
+    confidence: 0.81,
+    distance_ft: 206,
+    hotlist_match: false,
+    score: 76.1,
+    latitude: 37.4216,
+    longitude: -122.0834,
+    timestamp: Date.now(),
+    camera_id: "cam-side-2",
+    fingerprint: "8217bc923f7442be8d3247f5cbafe0cc",
+  },
+];
+
+function getPreviewMode(): PreviewMode | null {
+  if (typeof window === "undefined") return null;
+  const mode = new URLSearchParams(window.location.search).get("preview");
+  if (mode === "base" || mode === "route" || mode === "arrived") return mode;
+  return null;
+}
+
+
+function getPreviewAlertId(): string | null {
+  if (typeof window === "undefined") return null;
+  return new URLSearchParams(window.location.search).get("alert");
+}
+
+function buildPreviewRoute(start: [number, number], dest: [number, number]): RouteResponse {
+  const points = 5;
+  const polyline: [number, number][] = Array.from({ length: points }, (_, i) => {
+    const t = i / (points - 1);
+    return [
+      start[0] + (dest[0] - start[0]) * t,
+      start[1] + (dest[1] - start[1]) * t,
+    ];
+  });
+
+  return {
+    polyline,
+    distance_m: 3100,
+    duration_s: 520,
+    eta_iso: "2026-01-01T14:22:00.000Z",
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Main page
 // ---------------------------------------------------------------------------
 export default function NavigationPage() {
   const qc = useQueryClient();
+  const previewMode = getPreviewMode();
+  const previewAlertId = getPreviewAlertId();
+  const selectedPreviewAlert = PREVIEW_ALERTS.find((a) => a.id === previewAlertId) ?? null;
+  const isPreview = previewMode !== null;
 
   // Address input state
   const [address, setAddress] = useState("");
@@ -96,13 +190,65 @@ export default function NavigationPage() {
 
   // GPS from browser — map display uses state; GPS posts use a ref to avoid
   // restarting the posting interval every time the position changes
-  const [currentPos, setCurrentPos] = useState<[number, number] | null>(null);
+  const [currentPos, setCurrentPos] = useState<[number, number] | null>(
+    isPreview ? [37.4220, -122.0841] : null,
+  );
   const currentPosRef = useRef<[number, number] | null>(null);
 
   // Navigation session state
   const [navigating, setNavigating] = useState(false);
   const [arrived, setArrived] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [selectedAlert, setSelectedAlert] = useState<PreviewAlert | null>(null);
+  const [addressDetections, setAddressDetections] = useState<DetectionRecord[]>([]);
+  const [selectedDetection, setSelectedDetection] = useState<DetectionRecord | null>(null);
+  const [showDetectionsModal, setShowDetectionsModal] = useState(false);
+  const [addressNotice, setAddressNotice] = useState<string | null>(null);
+
+
+  useEffect(() => {
+    if (!previewMode) return;
+
+    if (selectedPreviewAlert) {
+      setSelectedAlert(selectedPreviewAlert);
+      setAddress(`${selectedPreviewAlert.latitude.toFixed(5)}, ${selectedPreviewAlert.longitude.toFixed(5)}`);
+      setGeocoded({
+        lat: selectedPreviewAlert.latitude,
+        lon: selectedPreviewAlert.longitude,
+        display_name: `${selectedPreviewAlert.camera} alert location`,
+      });
+      setRoute(buildPreviewRoute([37.4220, -122.0841], [selectedPreviewAlert.latitude, selectedPreviewAlert.longitude]));
+      setNavigating(true);
+      setArrived(false);
+      return;
+    }
+
+    setSelectedAlert(null);
+    setAddress("1600 Amphitheatre Parkway, Mountain View, CA");
+    setGeocoded({
+      lat: 37.4182,
+      lon: -122.0802,
+      display_name: "Google Building 41, Amphitheatre Pkwy, Mountain View",
+    });
+
+    if (previewMode === "base") {
+      setRoute(null);
+      setNavigating(false);
+      setArrived(false);
+      return;
+    }
+
+    setRoute(PREVIEW_ROUTE);
+
+    if (previewMode === "route") {
+      setNavigating(true);
+      setArrived(false);
+      return;
+    }
+
+    setNavigating(false);
+    setArrived(true);
+  }, [previewMode, selectedPreviewAlert]);
 
   // Default map centre (continental US) — overridden by GPS
   const DEFAULT_CENTER: LatLngTuple = [39.5, -98.35];
@@ -111,11 +257,19 @@ export default function NavigationPage() {
   // ------------------------------------------------------------------
   // Navigation status polling (only while navigating)
   // ------------------------------------------------------------------
-  useQuery<NavStatus>({
+  const { data: navStatus } = useQuery<NavStatus>({
     queryKey: ["nav-status"],
-    queryFn: () => fetch("/navigation/status").then((r) => r.json()),
+    queryFn: async () => {
+      const res = await fetch("/navigation/status");
+      if (!res.ok) throw new Error(`Failed to fetch navigation status (${res.status})`);
+      return res.json() as Promise<NavStatus>;
+    },
     refetchInterval: navigating ? 5000 : false,
-    enabled: navigating,
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json() as Promise<NavStatus>;
+    },
+    refetchInterval: navigating ? 5000 : false,
+    enabled: !isPreview && navigating,
   });
 
   // ------------------------------------------------------------------
@@ -126,17 +280,49 @@ export default function NavigationPage() {
       setArrived(true);
       setNavigating(false);
       qc.invalidateQueries({ queryKey: ["nav-status"] });
+      return;
+    }
+
+    if (ev.event === "STATUS") {
+      setNavigating(ev.navigating);
+      setArrived(ev.arrived);
     }
   }, [qc]);
 
-  useWebSocket(handleWsEvent);
+  useWebSocket(handleWsEvent, !isPreview);
+
+  // ------------------------------------------------------------------
+  // Hydrate local UI state from backend status snapshots.
+  // ------------------------------------------------------------------
+  useEffect(() => {
+    if (!navStatus) return;
+    setNavigating(navStatus.navigating);
+    setArrived(navStatus.arrival.arrived);
+
+    const destination = navStatus.destination;
+    if (destination) {
+      setGeocoded((prev) => {
+        if (prev && prev.lat === destination.lat && prev.lon === destination.lon) {
+          return prev;
+        }
+        return {
+          lat: destination.lat,
+          lon: destination.lon,
+          display_name: destination.display_name,
+        };
+      });
+      setArrivalRadiusFt(
+        typeof destination.radius_ft === "number" ? destination.radius_ft : RADIUS_DEFAULT_FT,
+      );
+    }
+  }, [navStatus]);
 
   // ------------------------------------------------------------------
   // Browser Geolocation — watchPosition updates the map marker only.
   // GPS position is also stored in a ref for the posting interval below.
   // ------------------------------------------------------------------
   useEffect(() => {
-    if (!navigator.geolocation) return;
+    if (isPreview || !navigator.geolocation) return;
 
     const id = navigator.geolocation.watchPosition(
       (pos) => {
@@ -149,7 +335,7 @@ export default function NavigationPage() {
     );
 
     return () => navigator.geolocation.clearWatch(id);
-  }, []);
+  }, [isPreview]);
 
   // ------------------------------------------------------------------
   // GPS POST interval — sends position to backend every 2s.
@@ -157,7 +343,8 @@ export default function NavigationPage() {
   // becomes false (navigation stopped or ARRIVED received).
   // ------------------------------------------------------------------
   useEffect(() => {
-    if (!navigating && !arrived) return;
+    if (!navigating) return;
+    if (isPreview || (!navigating && !arrived)) return;
 
     const interval = setInterval(() => {
       const pos = currentPosRef.current;
@@ -167,7 +354,34 @@ export default function NavigationPage() {
     }, GPS_POST_INTERVAL_MS);
 
     return () => clearInterval(interval);
-  }, [navigating, arrived]);
+  }, [navigating, arrived, isPreview]);
+
+  // ------------------------------------------------------------------
+  // Search detections near selected address
+  // ------------------------------------------------------------------
+  const addressSearchMutation = useMutation<DetectionSearchResponse, Error, { address: string }>({
+    mutationFn: ({ address }) => post<DetectionSearchResponse>("/navigation/detections/search", {
+      address,
+      radius_m: Math.max(60, Math.round(arrivalRadiusFt * 0.3048 * 1.5)),
+      limit: 100,
+    }),
+    onSuccess: (data) => {
+      setAddressDetections(data.detections);
+      if (data.total === 0) {
+        setAddressNotice("No prior detections found near this address.");
+        setShowDetectionsModal(false);
+        setSelectedDetection(null);
+      } else {
+        setAddressNotice(`Found ${data.total} prior detection${data.total !== 1 ? "s" : ""} near this address.`);
+        setShowDetectionsModal(true);
+        setSelectedDetection(data.detections[0] ?? null);
+      }
+    },
+    onError: () => {
+      setAddressNotice("Unable to search prior detections for this address.");
+      setShowDetectionsModal(false);
+    },
+  });
 
   // ------------------------------------------------------------------
   // Geocode mutation
@@ -178,6 +392,13 @@ export default function NavigationPage() {
       setGeocoded(data);
       setRoute(null);
       setErrorMsg(null);
+      setAddressNotice(null);
+      setAddressDetections([]);
+      setSelectedDetection(null);
+      setShowDetectionsModal(false);
+      if (!isPreview) {
+        addressSearchMutation.mutate({ address: data.display_name });
+      }
     },
     onError: (err) => setErrorMsg(`Geocode failed: ${err.message}`),
   });
@@ -201,11 +422,11 @@ export default function NavigationPage() {
 
   // Auto-fetch route when geocoded destination is set
   useEffect(() => {
-    if (geocoded && currentPos && !route) {
+    if (!isPreview && geocoded && currentPos && !route) {
       routeMutation.mutate();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [geocoded, currentPos]);
+  }, [geocoded, currentPos, isPreview]);
 
   // ------------------------------------------------------------------
   // Start navigation mutation — includes arrivalRadiusFt
@@ -251,12 +472,13 @@ export default function NavigationPage() {
     ([lat, lon]) => [lat, lon] as LatLngTuple,
   );
 
-  const canStart = geocoded !== null && !navigating && !arrived;
+  const canStart = geocoded !== null && !navigating && !arrived && !isPreview;
   const isLoading =
     geocodeMutation.isPending ||
     routeMutation.isPending ||
     startMutation.isPending ||
-    stopMutation.isPending;
+    stopMutation.isPending ||
+    addressSearchMutation.isPending;
 
   // ------------------------------------------------------------------
   // Render
@@ -276,6 +498,54 @@ export default function NavigationPage() {
         </div>
       )}
 
+      {isPreview && (
+        <div style={styles.previewBanner}>
+          Preview mode: use <code>?preview=base</code>, <code>?preview=route</code>, or <code>?preview=arrived</code> in the URL.
+        </div>
+      )}
+
+
+      {showDetectionsModal && (
+        <div style={styles.modalBackdrop} onClick={() => setShowDetectionsModal(false)}>
+          <div style={styles.modalPanel} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.modalHeaderRow}>
+              <h3 style={{ margin: 0 }}>Detection History at Address</h3>
+              <button style={styles.modalCloseBtn} onClick={() => setShowDetectionsModal(false)}>✕</button>
+            </div>
+            <div style={styles.modalBodyGrid}>
+              <div style={styles.modalList}>
+                {addressDetections.map((d) => (
+                  <button
+                    key={d.id}
+                    style={{ ...styles.modalListItem, ...(selectedDetection?.id === d.id ? styles.modalListItemActive : {}) }}
+                    onClick={() => setSelectedDetection(d)}
+                  >
+                    <div style={{ fontWeight: 700 }}>{d.plate_text ?? "No Plate"}</div>
+                    <div style={{ fontSize: "0.78rem", color: "#94a3b8" }}>{d.make ?? "Unknown"} {d.model ?? ""} · {d.camera_id}</div>
+                  </button>
+                ))}
+              </div>
+              <div style={styles.modalDetail}>
+                {selectedDetection ? (
+                  <>
+                    <div style={styles.routeRow}><span style={styles.routeLabel}>Plate</span><span style={styles.routeValue}>{selectedDetection.plate_text ?? "N/A"}</span></div>
+                    <div style={styles.routeRow}><span style={styles.routeLabel}>Vehicle</span><span style={styles.routeValue}>{selectedDetection.vehicle_class ?? "Unknown"}</span></div>
+                    <div style={styles.routeRow}><span style={styles.routeLabel}>Make / Model</span><span style={styles.routeValue}>{selectedDetection.make ?? "Unknown"} {selectedDetection.model ?? ""}</span></div>
+                    <div style={styles.routeRow}><span style={styles.routeLabel}>Address</span><span style={styles.routeValue}>{selectedDetection.detection_address ?? "Unknown"}</span></div>
+                    <div style={styles.routeRow}><span style={styles.routeLabel}>Coords</span><span style={styles.routeValue}>{selectedDetection.latitude?.toFixed?.(5) ?? "-"}, {selectedDetection.longitude?.toFixed?.(5) ?? "-"}</span></div>
+                    {selectedDetection.composite_path && (
+                      <img src={selectedDetection.composite_path} alt="Detection composite" style={styles.alertPhoto} />
+                    )}
+                  </>
+                ) : (
+                  <p style={{ color: "#94a3b8" }}>Select a detection to view details.</p>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Main layout ─────────────────────────────────────────── */}
       <div style={styles.layout}>
         {/* ── Sidebar ───────────────────────────────────────────── */}
@@ -286,20 +556,22 @@ export default function NavigationPage() {
             <input
               style={styles.input}
               type="text"
-              placeholder="Enter address or place name…"
               value={address}
               onChange={(e) => setAddress(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && address.trim()) {
+                if (e.key === "Enter" && address.trim() && !isPreview) {
                   geocodeMutation.mutate(address.trim());
                 }
               }}
-              disabled={navigating || isLoading}
+              disabled={navigating || isLoading || isPreview}
             />
+            <div style={{ color: "#94a3b8", fontSize: "0.75rem", marginTop: "0.5rem", marginBottom: "0.5rem" }}>
+              Enter address or place name, then press Enter or Search.
+            </div>
             <button
               style={{ ...styles.btn, ...styles.btnSecondary }}
-              onClick={() => address.trim() && geocodeMutation.mutate(address.trim())}
-              disabled={!address.trim() || navigating || isLoading}
+              onClick={() => address.trim() && !isPreview && geocodeMutation.mutate(address.trim())}
+              disabled={!address.trim() || navigating || isLoading || isPreview}
             >
               {geocodeMutation.isPending ? "Searching…" : "Search"}
             </button>
@@ -311,6 +583,9 @@ export default function NavigationPage() {
                   {geocoded.lat.toFixed(5)}, {geocoded.lon.toFixed(5)}
                 </div>
               </div>
+            )}
+            {addressNotice && (
+              <div style={styles.addressNotice}>{addressNotice}</div>
             )}
           </section>
 
@@ -324,7 +599,7 @@ export default function NavigationPage() {
               step={1}
               value={arrivalRadiusFt}
               onChange={(e) => setArrivalRadiusFt(Number(e.target.value))}
-              disabled={navigating}
+              disabled={navigating || isPreview}
               style={styles.slider}
             />
             <div style={styles.sliderValue}>
@@ -391,7 +666,7 @@ export default function NavigationPage() {
               <button
                 style={{ ...styles.btn, ...styles.btnDanger }}
                 onClick={() => stopMutation.mutate()}
-                disabled={isLoading}
+                disabled={isLoading || isPreview}
               >
                 {stopMutation.isPending ? "Stopping…" : "■ Stop Navigation"}
               </button>
@@ -403,8 +678,23 @@ export default function NavigationPage() {
             <div style={styles.errorBox}>⚠ {errorMsg}</div>
           )}
 
+          {selectedAlert && (
+            <section style={styles.card}>
+              <h2 style={styles.cardTitle}>Selected LPR Alert</h2>
+              <img src={selectedAlert.photoUrl} alt={`Scan of ${selectedAlert.plate}`} style={styles.alertPhoto} />
+              <div style={styles.routeRow}><span style={styles.routeLabel}>Plate</span><span style={styles.routeValue}>{selectedAlert.plate}</span></div>
+              <div style={styles.routeRow}><span style={styles.routeLabel}>Vehicle</span><span style={styles.routeValue}>{selectedAlert.vehicle}</span></div>
+              <div style={styles.routeRow}><span style={styles.routeLabel}>Make / Model</span><span style={styles.routeValue}>{selectedAlert.make} {selectedAlert.model}</span></div>
+              <div style={styles.routeRow}><span style={styles.routeLabel}>Color / Year</span><span style={styles.routeValue}>{selectedAlert.color} / {selectedAlert.yearRange}</span></div>
+              <div style={styles.routeRow}><span style={styles.routeLabel}>Camera</span><span style={styles.routeValue}>{selectedAlert.camera}</span></div>
+              <div style={styles.routeRow}><span style={styles.routeLabel}>Time</span><span style={styles.routeValue}>{selectedAlert.ts}</span></div>
+              <div style={styles.routeRow}><span style={styles.routeLabel}>Coordinates</span><span style={styles.routeValue}>{selectedAlert.latitude.toFixed(5)}, {selectedAlert.longitude.toFixed(5)}</span></div>
+              <div style={styles.routeRow}><span style={styles.routeLabel}>Confidence</span><span style={styles.routeValue}>{(selectedAlert.confidence * 100).toFixed(0)}%</span></div>
+            </section>
+          )}
+
           {/* Vehicle detection cards — visible after ARRIVED */}
-          <TargetList scanning={arrived} />
+          <TargetList scanning={arrived} previewTargets={isPreview ? PREVIEW_TARGETS : undefined} />
         </aside>
 
         {/* ── Map ───────────────────────────────────────────────── */}
@@ -517,6 +807,15 @@ const styles = {
     flexShrink: 0,
     animation: "pulse 2s ease-in-out infinite",
   },
+  previewBanner: {
+    margin: "0.5rem 1rem 0",
+    padding: "0.65rem 0.9rem",
+    borderRadius: "10px",
+    border: "1px solid #0ea5e9",
+    background: "rgba(14, 165, 233, 0.12)",
+    color: "#7dd3fc",
+    fontSize: "0.85rem",
+  },
   layout: {
     display: "flex",
     flex: 1,
@@ -614,6 +913,18 @@ const styles = {
     color: "#64748b",
     marginTop: "0.2rem",
   },
+  addressNotice: {
+    marginTop: "0.3rem",
+    fontSize: "0.78rem",
+    color: "#93c5fd",
+  },
+  alertPhoto: {
+    width: "100%",
+    borderRadius: "8px",
+    border: "1px solid #334155",
+    objectFit: "cover" as const,
+    maxHeight: "160px",
+  },
   routeRow: {
     display: "flex",
     justifyContent: "space-between",
@@ -658,5 +969,66 @@ const styles = {
     flex: 1,
     position: "relative" as const,
     overflow: "hidden",
+  },
+  modalBackdrop: {
+    position: "fixed" as const,
+    inset: 0,
+    background: "rgba(2,6,23,0.65)",
+    display: "grid",
+    placeItems: "center",
+    zIndex: 120,
+  },
+  modalPanel: {
+    width: "min(980px, 95vw)",
+    background: "#0b1220",
+    border: "1px solid #334155",
+    borderRadius: "12px",
+    padding: "0.9rem",
+  },
+  modalHeaderRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: "0.6rem",
+  },
+  modalCloseBtn: {
+    border: "1px solid #334155",
+    borderRadius: "6px",
+    background: "#111827",
+    color: "#e2e8f0",
+    cursor: "pointer",
+  },
+  modalBodyGrid: {
+    display: "grid",
+    gridTemplateColumns: "260px 1fr",
+    gap: "0.8rem",
+  },
+  modalList: {
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: "0.5rem",
+    maxHeight: "420px",
+    overflowY: "auto" as const,
+  },
+  modalListItem: {
+    textAlign: "left" as const,
+    padding: "0.55rem",
+    borderRadius: "8px",
+    border: "1px solid #334155",
+    background: "#111827",
+    color: "#e2e8f0",
+    cursor: "pointer",
+  },
+  modalListItemActive: {
+    border: "1px solid #3b82f6",
+    background: "rgba(30,58,138,0.35)",
+  },
+  modalDetail: {
+    border: "1px solid #334155",
+    borderRadius: "8px",
+    padding: "0.7rem",
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: "0.45rem",
   },
 } as const;

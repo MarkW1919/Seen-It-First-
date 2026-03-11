@@ -6,7 +6,6 @@ Logs periodic stats to SQLite.
 """
 
 import logging
-import os
 import time
 from pathlib import Path
 
@@ -32,7 +31,8 @@ class SystemMonitor:
         try:
             raw = self._gpu_load_path.read_text().strip()
             # Jetson reports GPU load as 0-1000 (permille)
-            return int(raw) / 10.0
+            util = int(raw) / 10.0
+            return max(0.0, min(100.0, util))
         except FileNotFoundError:
             return 0.0
         except (ValueError, OSError):
@@ -41,20 +41,17 @@ class SystemMonitor:
     def get_memory_info(self) -> tuple[float, float]:
         """Read system memory usage. Returns (used_mb, total_mb)."""
         try:
-            with open("/proc/meminfo", "r") as f:
-                lines = f.readlines()
-
-            mem_info = {}
-            for line in lines:
-                parts = line.split()
-                if len(parts) >= 2:
-                    key = parts[0].rstrip(":")
-                    val_kb = int(parts[1])
-                    mem_info[key] = val_kb
+            mem_info: dict[str, int] = {}
+            with open("/proc/meminfo", "r", encoding="utf-8") as f:
+                for line in f:
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        key = parts[0].rstrip(":")
+                        mem_info[key] = int(parts[1])
 
             total_kb = mem_info.get("MemTotal", 0)
             available_kb = mem_info.get("MemAvailable", 0)
-            used_kb = total_kb - available_kb
+            used_kb = max(0, total_kb - available_kb)
 
             return used_kb / 1024.0, total_kb / 1024.0
         except (FileNotFoundError, ValueError, OSError):

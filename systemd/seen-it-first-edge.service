@@ -8,10 +8,10 @@ Type=simple
 User=sif
 Group=sif
 WorkingDirectory=/opt/seen-it-first
+ExecStartPre=/opt/seen-it-first/venv/bin/python /opt/seen-it-first/scripts/preflight_check.py --system-config /opt/seen-it-first/edge/config/system.yaml --camera-config /opt/seen-it-first/edge/camera/config.yaml
 ExecStart=/opt/seen-it-first/venv/bin/python -m edge.main /opt/seen-it-first/edge/config/system.yaml
 Restart=on-failure
 RestartSec=10
-WatchdogSec=60
 
 # Resource limits
 LimitNOFILE=65536
