@@ -139,7 +139,7 @@ class FingerprintDeduplicator:
     ):
         self._window_s   = window_s
         self._dist_ft    = distance_ft
-        # fingerprint → (last_seen_time, lat, lon)
+        # fingerprint → (last_seen_monotonic, lat, lon)
         self._seen: dict[str, tuple[float, float, float]] = {}
         self._last_eviction = time.monotonic()
 
@@ -172,37 +172,37 @@ class FingerprintDeduplicator:
 
         existing = self._seen.get(fingerprint)
         if existing is None:
-            self._seen[fingerprint] = (timestamp, lat, lon)
+            self._seen[fingerprint] = (now, lat, lon)
             return False
 
-        prev_ts, prev_lat, prev_lon = existing
+        prev_seen, prev_lat, prev_lon = existing
 
         # Outside time window → treat as new detection
-        if (timestamp - prev_ts) > self._window_s:
-            self._seen[fingerprint] = (timestamp, lat, lon)
+        if (now - prev_seen) > self._window_s:
+            self._seen[fingerprint] = (now, lat, lon)
             return False
 
         # Within time window — check GPS proximity
         dist_ft = _approx_distance_ft(lat, lon, prev_lat, prev_lon)
         if dist_ft < self._dist_ft:
             # Update timestamp so the window slides forward
-            self._seen[fingerprint] = (timestamp, lat, lon)
+            self._seen[fingerprint] = (now, lat, lon)
             logger.debug(
                 "Fingerprint dedup: %s suppressed (age=%.1fs dist=%.1fft)",
-                fingerprint, timestamp - prev_ts, dist_ft,
+                fingerprint, now - prev_seen, dist_ft,
             )
             return True
 
         # Same fingerprint but vehicle moved more than threshold → new sighting
-        self._seen[fingerprint] = (timestamp, lat, lon)
+        self._seen[fingerprint] = (now, lat, lon)
         return False
 
     def _maybe_evict(self, now: float):
         """Periodically remove entries older than 2× the window."""
         if (now - self._last_eviction) < self._window_s * 2:
             return
-        cutoff = time.time() - self._window_s * 2
-        stale = [fp for fp, (ts, _, __) in self._seen.items() if ts < cutoff]
+        cutoff = now - self._window_s * 2
+        stale = [fp for fp, (seen_at, _, __) in self._seen.items() if seen_at < cutoff]
         for fp in stale:
             del self._seen[fp]
         self._last_eviction = now

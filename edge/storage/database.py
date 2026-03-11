@@ -82,6 +82,8 @@ class Database:
                 )
                 logger.info("Migration: added column %s.%s", table, column)
             except sqlite3.OperationalError as exc:
+                if "duplicate column name" in str(exc).lower():
+                    logger.debug("Migration skipped: column exists %s.%s", table, column)
                 msg = str(exc).lower()
                 if "duplicate column name" in msg:
                     continue
