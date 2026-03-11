@@ -72,6 +72,7 @@ class Database:
             ("detections", "confidence",     "REAL"),
             ("detections", "latitude",       "REAL"),
             ("detections", "longitude",      "REAL"),
+            ("detections", "detection_address", "TEXT"),
             ("detections", "fingerprint",    "TEXT"),
         ]
         for table, column, col_type in new_columns:
@@ -80,8 +81,12 @@ class Database:
                     f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"
                 )
                 logger.info("Migration: added column %s.%s", table, column)
-            except sqlite3.OperationalError:
-                pass  # column already exists — skip
+            except sqlite3.OperationalError as exc:
+                msg = str(exc).lower()
+                if "duplicate column name" in msg:
+                    continue
+                logger.exception("Migration failed for %s.%s", table, column)
+                raise
 
     def _get_connection(self) -> sqlite3.Connection:
         """Get or create a thread-local connection."""

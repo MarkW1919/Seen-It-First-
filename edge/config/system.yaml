@@ -97,6 +97,14 @@ thermal:
   cooldown_fps_2: 8
   zone_path: "/sys/devices/virtual/thermal/thermal_zone0/temp"
 
+evidence_selection:
+  # Cross-camera arbitration weights for choosing the best plate evidence frame
+  weight_ocr: 0.45
+  weight_plate_area: 0.20
+  weight_sharpness: 0.20
+  weight_exposure: 0.10
+  night_bonus: 0.05
+
 night_vision:
   brightness_threshold: 60  # histogram mean below this = night mode
   clahe_clip_limit: 3.0
@@ -126,5 +134,10 @@ navigation:
   geocode_cache_path: "data/geocode_cache.json"
 
 api:
-  host: "0.0.0.0"
+  host: "127.0.0.1"
   port: 8080
+  # Optional shared secret for /navigation/* and /ws (empty disables auth)
+  auth_token: ""
+  # Restrict browser origins for dashboard/API calls
+  allowed_origins:
+    - "http://localhost:5173"

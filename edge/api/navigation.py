@@ -10,6 +10,7 @@ GET  /navigation/status      — current navigation state snapshot
 """
 
 import logging
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -36,11 +37,22 @@ class GeocodeResponse(BaseModel):
     display_name: str
 
 
+_FT_TO_M = 0.3048
+_RADIUS_FT_MIN = 1.0
+_RADIUS_FT_MAX = 1320.0   # ¼ mile
+_RADIUS_FT_DEFAULT = 300.0
+
+_LAT_MIN = -90.0
+_LAT_MAX = 90.0
+_LON_MIN = -180.0
+_LON_MAX = 180.0
+
+
 class RouteRequest(BaseModel):
-    start_lat: float
-    start_lon: float
-    dest_lat: float
-    dest_lon: float
+    start_lat: float = Field(..., ge=_LAT_MIN, le=_LAT_MAX)
+    start_lon: float = Field(..., ge=_LON_MIN, le=_LON_MAX)
+    dest_lat: float = Field(..., ge=_LAT_MIN, le=_LAT_MAX)
+    dest_lon: float = Field(..., ge=_LON_MIN, le=_LON_MAX)
 
 class RouteResponse(BaseModel):
     polyline: list[list[float]]   # [[lat, lon], ...]
@@ -49,25 +61,57 @@ class RouteResponse(BaseModel):
     eta_iso: str
 
 
-_FT_TO_M = 0.3048
-_RADIUS_FT_MIN = 1.0
-_RADIUS_FT_MAX = 1320.0   # ¼ mile
-_RADIUS_FT_DEFAULT = 300.0
-
-
 class StartNavRequest(BaseModel):
-    dest_lat: float
-    dest_lon: float
+    dest_lat: float = Field(..., ge=_LAT_MIN, le=_LAT_MAX)
+    dest_lon: float = Field(..., ge=_LON_MIN, le=_LON_MAX)
     display_name: str = ""
     radius_ft: float = Field(
         default=_RADIUS_FT_DEFAULT,
+        ge=_RADIUS_FT_MIN,
+        le=_RADIUS_FT_MAX,
         description="Arrival geofence radius in feet (1–1320 ft, ¼ mile max)",
     )
 
 class GPSRequest(BaseModel):
-    lat: float
-    lon: float
+    lat: float = Field(..., ge=_LAT_MIN, le=_LAT_MAX)
+    lon: float = Field(..., ge=_LON_MIN, le=_LON_MAX)
 
+
+
+class DetectionSearchRequest(BaseModel):
+    plate_text: str = ""
+    vehicle_class: str = ""
+    make: str = ""
+    model: str = ""
+    address: str = ""
+    radius_m: float = Field(default=120.0, ge=1.0, le=5000.0)
+    limit: int = Field(default=100, ge=1, le=500)
+
+
+class DetectionSummary(BaseModel):
+    id: int
+    timestamp: float
+    plate_text: str | None = None
+    vehicle_class: str | None = None
+    make: str | None = None
+    model: str | None = None
+    year_range: str | None = None
+    confidence: float | None = None
+    camera_id: str
+    detection_address: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    snapshot_path: str | None = None
+    plate_path: str | None = None
+    vehicle_path: str | None = None
+    composite_path: str | None = None
+    distance_m: float | None = None
+
+
+class DetectionSearchResponse(BaseModel):
+    address: str = ""
+    total: int
+    detections: list[DetectionSummary]
 
 # ---------------------------------------------------------------------------
 # Dependency: pull NavigationState from app.state
@@ -85,8 +129,12 @@ def _nav(request: Request) -> NavigationState:
 def geocode(body: GeocodeRequest, request: Request):
     """Convert a human-readable address to GPS coordinates."""
     nav = _nav(request)
+    address = body.address.strip()
+    if len(address) < 2:
+        raise HTTPException(status_code=422, detail="address must contain at least 2 non-space characters")
+
     try:
-        result = nav.geocoder.geocode(body.address)
+        result = nav.geocoder.geocode(address)
     except GeocoderError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return GeocodeResponse(
@@ -107,12 +155,14 @@ def get_route(body: RouteRequest, request: Request):
         )
     except RouterError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return RouteResponse(
+    response = RouteResponse(
         polyline=result.polyline,
         distance_m=result.distance_m,
         duration_s=result.duration_s,
         eta_iso=result.eta_iso,
     )
+    nav.current_route = response.model_dump()
+    return response
 
 
 @router.post("/start")
@@ -125,12 +175,6 @@ def start_navigation(body: StartNavRequest, request: Request):
     - Switches the LPR pipeline to IDLE (no scanning while en route).
     - Stores destination in session state.
     """
-    if not (_RADIUS_FT_MIN <= body.radius_ft <= _RADIUS_FT_MAX):
-        raise HTTPException(
-            status_code=400,
-            detail=f"radius_ft must be between {_RADIUS_FT_MIN:.0f} and {_RADIUS_FT_MAX:.0f} ft",
-        )
-
     radius_m = body.radius_ft * _FT_TO_M
 
     nav = _nav(request)
@@ -148,6 +192,8 @@ def start_navigation(body: StartNavRequest, request: Request):
         "radius_ft": body.radius_ft,
         "radius_m": round(radius_m, 2),
     }
+
+    nav.gps_state.set_address(body.display_name)
 
     logger.info(
         "Navigation started → (%.6f, %.6f) %s  radius=%.0fft (%.1fm)",
@@ -170,6 +216,7 @@ def stop_navigation(request: Request):
     nav.is_navigating = False
     nav.destination = None
     nav.current_route = None
+    nav.gps_state.clear_address()
 
     logger.info("Navigation stopped — pipeline ACTIVE")
     return {"status": "stopped"}
@@ -198,13 +245,16 @@ async def update_gps(body: GPSRequest, request: Request):
         nav.is_navigating = False
 
         # Broadcast ARRIVED event to all dashboard clients
-        await nav.ws_manager.broadcast({
-            "event": "ARRIVED",
-            "lat": body.lat,
-            "lon": body.lon,
-            "destination": nav.destination,
-        })
-        logger.info("ARRIVED event broadcast to %d WS client(s)", nav.ws_manager.client_count)
+        try:
+            await nav.ws_manager.broadcast({
+                "event": "ARRIVED",
+                "lat": body.lat,
+                "lon": body.lon,
+                "destination": nav.destination,
+            })
+            logger.info("ARRIVED event broadcast to %d WS client(s)", nav.ws_manager.client_count)
+        except Exception:
+            logger.exception("Failed to broadcast ARRIVED event")
 
     return {
         "status": "ok",
@@ -239,6 +289,66 @@ def get_targets(request: Request):
     return {"targets": [v.to_dict() for v in ranked[:10]]}
 
 
+
+@router.post("/detections/search", response_model=DetectionSearchResponse)
+def search_detections(body: DetectionSearchRequest, request: Request):
+    """Search detections by plate/vehicle/make/model and optional address proximity."""
+    nav = _nav(request)
+    if nav.repository is None:
+        return DetectionSearchResponse(address=body.address, total=0, detections=[])
+
+    detections: list[dict]
+    if body.address.strip():
+        try:
+            geo = nav.geocoder.geocode(body.address.strip())
+            detections = nav.repository.search_detections_near(
+                geo.lat,
+                geo.lon,
+                radius_m=body.radius_m,
+                plate_text=body.plate_text,
+                vehicle_class=body.vehicle_class,
+                make=body.make,
+                model=body.model,
+                limit=body.limit,
+            )
+        except GeocoderError:
+            detections = nav.repository.search_detections(
+                plate_text=body.plate_text,
+                vehicle_class=body.vehicle_class,
+                make=body.make,
+                model=body.model,
+                detection_address=body.address,
+                limit=body.limit,
+            )
+    else:
+        detections = nav.repository.search_detections(
+            plate_text=body.plate_text,
+            vehicle_class=body.vehicle_class,
+            make=body.make,
+            model=body.model,
+            detection_address=body.address,
+            limit=body.limit,
+        )
+
+    return DetectionSearchResponse(
+        address=body.address,
+        total=len(detections),
+        detections=[DetectionSummary(**d) for d in detections],
+    )
+
+
+@router.get("/detections/{detection_id}")
+def get_detection(detection_id: int, request: Request):
+    """Return full detection detail by ID."""
+    nav = _nav(request)
+    if nav.repository is None:
+        raise HTTPException(status_code=503, detail="repository not initialised")
+
+    row = nav.repository.get_detection_by_id(detection_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="detection not found")
+    return row
+
 @router.get("/status")
 def get_status(request: Request):
     """Return full navigation status snapshot."""
@@ -247,6 +357,7 @@ def get_status(request: Request):
         "navigating": nav.is_navigating,
         "destination": nav.destination,
         "current_pos": nav.current_pos,
+        "current_route": nav.current_route,
         "pipeline_active": nav.scheduler.is_active,
         "arrival": nav.arrival_detector.status(),
         "ws_clients": nav.ws_manager.client_count,
