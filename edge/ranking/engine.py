@@ -16,6 +16,7 @@ Design constraints
 import math
 import time
 import logging
+import re
 from typing import TYPE_CHECKING
 
 from edge.ranking.models import RankedVehicle
@@ -32,6 +33,7 @@ CACHE_MAX_AGE_S = 60.0
 
 # Earth radius in feet  (3 958.8 miles × 5 280 ft/mi)
 _EARTH_RADIUS_FT = 20_902_464.0
+_PLATE_NORMALIZE_RE = re.compile(r"[^A-Z0-9]")
 
 
 class RankingEngine:
@@ -103,11 +105,15 @@ class RankingEngine:
         results: list[RankedVehicle] = []
 
         for (cam_id, track_id), det in snapshot.items():
-            age_s = now - det.timestamp
+            age_s = max(0.0, now - det.timestamp)
 
+            det_lat = float(getattr(det, "latitude", 0.0) or 0.0)
+            det_lon = float(getattr(det, "longitude", 0.0) or 0.0)
             distance_ft = _haversine_ft(
-                det.latitude, det.longitude,
-                destination_lat, destination_lon,
+                det_lat,
+                det_lon,
+                destination_lat,
+                destination_lon,
             )
 
             hotlist_match = self._is_hotlist(det.plate_text)
@@ -132,8 +138,8 @@ class RankingEngine:
                 distance_ft=distance_ft,
                 hotlist_match=hotlist_match,
                 score=score,
-                latitude=det.latitude,
-                longitude=det.longitude,
+                latitude=det_lat,
+                longitude=det_lon,
                 timestamp=det.timestamp,
                 camera_id=cam_id,
                 fingerprint=getattr(det, "fingerprint", ""),
@@ -150,10 +156,9 @@ class RankingEngine:
         """Check plate against hotlist without triggering cooldowns."""
         if not plate_text or not self._hotlist:
             return False
-        import re
-        normalized = re.sub(r"[^A-Z0-9]", "", plate_text.upper().strip())
+        normalized = _PLATE_NORMALIZE_RE.sub("", plate_text.upper().strip())
         try:
-            return normalized in self._hotlist.loader.plates
+            return bool(normalized) and normalized in self._hotlist.loader.plates
         except Exception:
             return False
 
@@ -178,5 +183,6 @@ def _haversine_ft(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     dlon  = math.radians(lon2 - lon1)
 
     a = math.sin(dlat / 2) ** 2 + math.cos(lat1r) * math.cos(lat2r) * math.sin(dlon / 2) ** 2
-    c = 2 * math.asin(math.sqrt(max(0.0, a)))
+    a = min(1.0, max(0.0, a))
+    c = 2 * math.asin(math.sqrt(a))
     return _EARTH_RADIUS_FT * c

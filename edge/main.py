@@ -52,6 +52,10 @@ logger = logging.getLogger("seen-it-first")
 # Base directory (repo root)
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# Canonical runtime model roots
+MODELS_ROOT = BASE_DIR / "models"
+ONNX_MODELS_ROOT = MODELS_ROOT / "onnx"
+
 
 def load_config(config_path: str | None = None) -> dict:
     """Load system configuration from YAML."""
@@ -165,20 +169,29 @@ class EdgeService:
 
         vehicle_det = VehicleDetector(inf_config.get("vehicle_detection", {}))
         plate_det   = PlateDetector(inf_config.get("plate_detection", {}))
-        ocr         = PlateOCR(inf_config.get("ocr", {}))
+        ocr_cfg = dict(inf_config.get("ocr", {}))
+        ocr_cfg.update(self.config.get("night_vision", {}))
+        ocr         = PlateOCR(ocr_cfg)
 
         # Vehicle intelligence sub-models (all ONNX-based, graceful fallback)
-        models_dir      = str(BASE_DIR / "edge" / "models")
-        clf_cfg         = inf_config.get("classifier", {})
-        clf_model_cfg   = inf_config.get("vehicle_classifier", {
+        models_dir = str(ONNX_MODELS_ROOT)
+        clf_cfg = inf_config.get("classifier", {})
+
+        # Merge defaults with config overrides so model_path is always present.
+        clf_model_cfg = {
             "model_path": f"{models_dir}/vehicle_make_model_classifier.onnx",
-        })
-        color_cfg       = inf_config.get("vehicle_color", {
+            **(inf_config.get("vehicle_classifier", {}) or {}),
+        }
+        color_cfg = {
             "model_path": f"{models_dir}/vehicle_color_model.onnx",
-        })
-        reid_cfg        = inf_config.get("vehicle_reid", {
+            **(inf_config.get("vehicle_color", {}) or {}),
+        }
+        reid_cfg = {
             "model_path": f"{models_dir}/vehicle_embedding_model.onnx",
-        })
+            **(inf_config.get("vehicle_reid", {}) or {}),
+        }
+
+        self._preflight_model_files(inf_config, clf_model_cfg, color_cfg, reid_cfg)
 
         clf_model   = VehicleClassifierModel(clf_model_cfg)
         color_det   = VehicleColorDetector(color_cfg)
@@ -248,7 +261,8 @@ class EdgeService:
         )
 
         # Scheduler
-        sched_config = self.config.get("scheduling", {})
+        sched_config = dict(self.config.get("scheduling", {}))
+        sched_config["brightness_threshold"] = self.config.get("night_vision", {}).get("brightness_threshold", 60)
         self.scheduler = InferenceScheduler(sched_config)
         self.scheduler.set_camera_manager(self.camera_manager)
         self.scheduler.set_models(
@@ -283,6 +297,57 @@ class EdgeService:
         logger.info("Initialization complete")
         return True
 
+    def _preflight_model_files(
+        self,
+        inf_config: dict,
+        clf_model_cfg: dict,
+        color_cfg: dict,
+        reid_cfg: dict,
+    ) -> None:
+        """Log missing model artifacts at startup using absolute paths."""
+
+        expected_paths = [
+            inf_config.get("vehicle_detection", {}).get("model_path"),
+            inf_config.get("plate_detection", {}).get("model_path"),
+            inf_config.get("ocr", {}).get("model_path"),
+            inf_config.get("classifier", {}).get("model_path"),
+            clf_model_cfg.get("model_path"),
+            color_cfg.get("model_path"),
+            reid_cfg.get("model_path"),
+        ]
+
+        # Label map is expected next to the make/model ONNX classifier.
+        clf_model_path = self._resolve_model_path(clf_model_cfg.get("model_path"))
+        if clf_model_path is not None:
+            expected_paths.append(str(clf_model_path.parent / "vehicle_make_model_labels.json"))
+
+        missing: set[Path] = set()
+        for raw_path in expected_paths:
+            abs_path = self._resolve_model_path(raw_path)
+            if abs_path is None:
+                continue
+            if not abs_path.exists():
+                missing.add(abs_path)
+
+        if not missing:
+            logger.info("Model preflight: all expected model artifacts found")
+            return
+
+        missing_sorted = sorted(missing)
+        logger.warning("Model preflight: %d expected files missing", len(missing_sorted))
+        for missing_path in missing_sorted:
+            logger.warning("Model preflight missing file: %s", missing_path)
+
+    def _resolve_model_path(self, raw_path: str | None) -> Path | None:
+        """Resolve raw model paths (relative/absolute/~) into absolute paths."""
+        if not raw_path:
+            return None
+
+        path = Path(raw_path).expanduser()
+        if not path.is_absolute():
+            path = BASE_DIR / path
+        return path.resolve()
+
     def _start_api_server(self):
         """Start the FastAPI navigation server in a daemon thread."""
         from edge.api.app import create_app, ConnectionManager
@@ -298,10 +363,12 @@ class EdgeService:
         api_app = create_app(
             scheduler=self.scheduler,
             config=nav_cfg,
+            api_config=api_cfg,
             ws_manager=ws_manager,
             event_publisher=self.event_publisher,
             ranking_engine=self.ranking_engine,
             gps_state=self.gps_state,
+            repository=self.repo,
         )
 
         host = api_cfg.get("host", "0.0.0.0")
@@ -344,6 +411,7 @@ class EdgeService:
             "Edge service running with %d camera(s): %s",
             len(active), ", ".join(active),
         )
+        logger.info("Systemd watchdog mode: disabled (Type=simple, no heartbeat notifications)")
 
         self._running = True
         self._run_loop()
@@ -375,7 +443,6 @@ class EdgeService:
 
             # Process frames from all cameras
             frames = self.camera_manager.get_latest_frames()
-
             for cam_id, packet in frames.items():
                 if packet is None:
                     continue
@@ -383,31 +450,6 @@ class EdgeService:
                 result = self.scheduler.process_frame(packet)
                 if result is None:
                     continue  # frame skipped (rate limiting)
-
-                # Save detections with plate info
-                for ocr_result in result.ocr_results:
-                    plate = ocr_result.plate_detection
-                    vehicle = plate.vehicle_box
-                    classification = result.classifications.get(None)
-
-                    self.repo.save_detection(
-                        result,
-                        plate_text=ocr_result.text,
-                        plate_confidence=ocr_result.confidence,
-                        vehicle_class=vehicle.class_name,
-                        vehicle_color=classification.color if classification else "",
-                        year_bucket=classification.year_bucket if classification else "",
-                        bbox=(vehicle.x1, vehicle.y1, vehicle.x2, vehicle.y2),
-                    )
-
-                # Hotlist check
-                if result.ocr_results:
-                    alerts = self.hotlist_matcher.check(
-                        result.ocr_results, cam_id,
-                    )
-                    for alert in alerts:
-                        self.repo.save_alert(alert)
-                        self.alert_manager.fire_alert(alert)
 
             # Periodic hotlist reload check
             if self._loop_count % 500 == 0:

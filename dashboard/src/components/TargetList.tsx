@@ -1,33 +1,43 @@
-import React, { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback } from "react";
 import type { RankedVehicle } from "../types/navigation";
 import { VehicleDetectionCard } from "./VehicleDetectionCard";
 
-const API_BASE = "http://localhost:8080";
 const REFRESH_INTERVAL_MS = 3000;
 const MAX_TARGETS = 10;
 
 interface TargetsResponse {
   targets: RankedVehicle[];
+  error?: string;
 }
 
 interface Props {
   /** When true (ARRIVED event received) the panel is visible and polling starts. */
   scanning: boolean;
+  /** Optional static targets used for UI previews/demo mode. */
+  previewTargets?: RankedVehicle[];
 }
 
-export function TargetList({ scanning }: Props) {
+export function TargetList({ scanning, previewTargets }: Props) {
   const [vehicles, setVehicles] = useState<RankedVehicle[]>([]);
   const [error, setError]       = useState<string | null>(null);
   const [loading, setLoading]   = useState(false);
 
-  const fetchTargets = useCallback(async () => {
+  const fetchTargets = useCallback(async (signal?: AbortSignal) => {
+    setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/navigation/targets`);
+      const res = await fetch("/navigation/targets", { signal });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: TargetsResponse = await res.json();
+      if (data.error) throw new Error(data.error);
       setVehicles(data.targets.slice(0, MAX_TARGETS));
       setError(null);
+      const res = await fetch("/navigation/targets");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data: TargetsResponse = await res.json();
+      setVehicles((data.targets ?? []).slice(0, MAX_TARGETS));
+      setError(data.error ?? null);
     } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
       setError(err instanceof Error ? err.message : "Fetch failed");
     } finally {
       setLoading(false);
@@ -38,6 +48,24 @@ export function TargetList({ scanning }: Props) {
   useEffect(() => {
     if (!scanning) {
       setVehicles([]);
+      setError(null);
+      setLoading(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    fetchTargets(controller.signal);
+
+    const interval = setInterval(() => fetchTargets(controller.signal), REFRESH_INTERVAL_MS);
+    return () => {
+      controller.abort();
+      clearInterval(interval);
+    };
+  }, [scanning, fetchTargets]);
+    if (previewTargets && previewTargets.length > 0) {
+      setVehicles(previewTargets.slice(0, MAX_TARGETS));
+      setLoading(false);
+      setError(null);
       return;
     }
 
@@ -46,7 +74,7 @@ export function TargetList({ scanning }: Props) {
 
     const interval = setInterval(fetchTargets, REFRESH_INTERVAL_MS);
     return () => clearInterval(interval);
-  }, [scanning, fetchTargets]);
+  }, [scanning, fetchTargets, previewTargets]);
 
   if (!scanning) return null;
 

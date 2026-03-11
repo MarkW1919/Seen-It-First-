@@ -55,7 +55,9 @@ class VehicleScorer:
 
         # Component scores (each 0–100)
         plate_score = 100.0 if has_plate else 0.0
-        conf_score  = min(vehicle_conf, 1.0) * 100.0
+        conf_score  = max(0.0, min(vehicle_conf, 1.0)) * 100.0
+
+        distance_ft = max(0.0, distance_ft)
 
         if distance_ft <= 50:
             dist_score = 100.0

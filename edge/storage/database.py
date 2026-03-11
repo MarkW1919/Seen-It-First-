@@ -72,6 +72,7 @@ class Database:
             ("detections", "confidence",     "REAL"),
             ("detections", "latitude",       "REAL"),
             ("detections", "longitude",      "REAL"),
+            ("detections", "detection_address", "TEXT"),
             ("detections", "fingerprint",    "TEXT"),
         ]
         for table, column, col_type in new_columns:
@@ -83,6 +84,8 @@ class Database:
             except sqlite3.OperationalError as exc:
                 if "duplicate column name" in str(exc).lower():
                     logger.debug("Migration skipped: column exists %s.%s", table, column)
+                msg = str(exc).lower()
+                if "duplicate column name" in msg:
                     continue
                 logger.exception("Migration failed for %s.%s", table, column)
                 raise

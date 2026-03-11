@@ -72,7 +72,7 @@ class InferenceScheduler:
 
         # Night mode state
         self._night_mode: dict[str, bool] = {}
-        self._brightness_threshold = 60
+        self._brightness_threshold = config.get("brightness_threshold", 60)
 
         # Model references kept for backward compat (thermal management,
         # shutdown, and external callers that access scheduler.classifier etc.)
@@ -266,13 +266,44 @@ class InferenceScheduler:
 # ---------------------------------------------------------------------------
 
 class _NoOpFusionEngine:
+    """Fallback fusion engine used when a real engine is not wired."""
+
+    def __init__(self):
+        self.detections_seen = 0
+
     def add_detection(self, detection):
-        pass
+        self.detections_seen += 1
+        return None
 
 
 class _NoOpEventPublisher:
-    def publish_detection(self, data): pass
-    def publish_alert(self, data): pass
-    def publish_system_event(self, event_type, data): pass
-    def set_event_loop(self, loop): pass
-    def set_ws_manager(self, ws_manager): pass
+    """Fallback event publisher that records dropped events for observability."""
+
+    def __init__(self):
+        self.detection_events = 0
+        self.alert_events = 0
+        self.system_events = 0
+        self.last_event_loop = None
+        self.last_ws_manager = None
+
+    def publish_detection(self, data):
+        self.detection_events += 1
+        logger.debug("No-op publisher dropped detection event: %s", data)
+
+    def publish_alert(self, data):
+        self.alert_events += 1
+        logger.debug("No-op publisher dropped alert event: %s", data)
+
+    def publish_system_event(self, event_type, data):
+        self.system_events += 1
+        logger.debug(
+            "No-op publisher dropped system event type=%s payload=%s",
+            event_type,
+            data,
+        )
+
+    def set_event_loop(self, loop):
+        self.last_event_loop = loop
+
+    def set_ws_manager(self, ws_manager):
+        self.last_ws_manager = ws_manager

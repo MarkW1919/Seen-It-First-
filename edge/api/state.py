@@ -16,6 +16,7 @@ from edge.navigation.arrival_detector import ArrivalDetector
 if TYPE_CHECKING:
     from edge.inference.scheduler import InferenceScheduler
     from edge.ranking.engine import RankingEngine
+    from edge.storage.repository import DetectionRepository
 
 
 class GpsState:
@@ -31,11 +32,18 @@ class GpsState:
         self._lat: float = 0.0
         self._lon: float = 0.0
         self._lock = threading.Lock()
+        self._address: str = ""
 
     def update(self, lat: float, lon: float):
         with self._lock:
             self._lat = lat
             self._lon = lon
+
+    def set_address(self, address: str):
+        self._address = address.strip()
+
+    def clear_address(self):
+        self._address = ""
 
     def get(self) -> tuple[float, float]:
         with self._lock:
@@ -50,6 +58,10 @@ class GpsState:
     def lon(self) -> float:
         with self._lock:
             return self._lon
+
+    @property
+    def address(self) -> str:
+        return self._address
 
 
 class NavigationState:
@@ -67,6 +79,7 @@ class NavigationState:
         ws_manager:       Any,       # ConnectionManager — typed as Any to avoid re-importing
         ranking_engine:   "RankingEngine | None" = None,
         gps_state:        "GpsState | None" = None,
+        repository:       "DetectionRepository | None" = None,
     ):
         self.scheduler        = scheduler
         self.geocoder         = geocoder
@@ -75,6 +88,7 @@ class NavigationState:
         self.ws_manager       = ws_manager
         self.ranking_engine   = ranking_engine
         self.gps_state        = gps_state or GpsState()
+        self.repository       = repository
 
         # Navigation session state
         self.is_navigating: bool = False
