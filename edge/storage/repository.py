@@ -274,7 +274,6 @@ class DetectionRepository:
         vehicle_class: str = "",
         make: str = "",
         model: str = "",
-        detection_address: str = "",
         limit: int = 300,
     ) -> list[dict]:
         rows = self.search_detections(
@@ -282,7 +281,6 @@ class DetectionRepository:
             vehicle_class=vehicle_class,
             make=make,
             model=model,
-            detection_address=detection_address,
             limit=limit,
         )
         out = []
