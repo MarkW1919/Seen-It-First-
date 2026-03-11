@@ -57,6 +57,10 @@ MODELS_ROOT = BASE_DIR / "models"
 ONNX_MODELS_ROOT = MODELS_ROOT / "onnx"
 
 
+def _is_public_navigation_endpoint(url: str) -> bool:
+    return "openstreetmap.org" in url or "project-osrm.org" in url
+
+
 def load_config(config_path: str | None = None) -> dict:
     """Load system configuration from YAML."""
     if config_path is None:
@@ -290,6 +294,7 @@ class EdgeService:
 
         # Navigation API server (FastAPI + uvicorn, daemon thread)
         # Also wires ws_manager into event_publisher
+        self._warn_on_navigation_endpoint_risk()
         self._start_api_server()
 
         logger.info("CameraManager started")
@@ -297,6 +302,33 @@ class EdgeService:
         logger.info("Initialization complete")
         return True
 
+
+    def _warn_on_navigation_endpoint_risk(self):
+        """Warn when production profile uses public navigation endpoints."""
+        sys_cfg = self.config.get("system", {})
+        nav_cfg = self.config.get("navigation", {})
+
+        profile = str(sys_cfg.get("profile", "production")).lower()
+        mode = str(nav_cfg.get("mode", "hybrid")).lower()
+        allow_public = bool(nav_cfg.get("allow_public_endpoints", False))
+
+        nominatim_url = str(nav_cfg.get("nominatim_url", ""))
+        osrm_url = str(nav_cfg.get("osrm_url", ""))
+        public_nom = str(nav_cfg.get("public_nominatim_url", ""))
+        public_osrm = str(nav_cfg.get("public_osrm_url", ""))
+
+        using_public = any([
+            _is_public_navigation_endpoint(nominatim_url),
+            _is_public_navigation_endpoint(osrm_url),
+            (mode == "online" and _is_public_navigation_endpoint(public_nom)),
+            (mode == "online" and _is_public_navigation_endpoint(public_osrm)),
+        ])
+
+        if profile == "production" and (allow_public or using_public):
+            logger.warning(
+                "Production profile is configured with public navigation endpoints or fallbacks. "
+                "Use self-hosted endpoints and keep navigation.allow_public_endpoints=false unless explicitly approved."
+            )
     def _preflight_model_files(
         self,
         inf_config: dict,

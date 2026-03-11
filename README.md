@@ -131,6 +131,33 @@ python -m edge.main
 python scripts/preflight_check.py
 ```
 
+## Navigation Service Modes & Production Defaults
+
+Navigation behavior is controlled by `navigation.mode` in `edge/config/system.yaml`:
+
+- `offline`: disables external geocoding/routing lookups (`/navigation/geocode` and `/navigation/route` will return configuration errors).
+- `hybrid` (recommended): uses self-hosted endpoints by default; public fallback is blocked unless `navigation.allow_public_endpoints=true`.
+- `online`: allows remote/public lookups for development/testing only.
+
+Production defaults are configured to prefer self-hosted endpoints and keep public endpoints disabled.
+
+### Self-Hosted Navigation Deployment Requirements
+
+For production, deploy both services on your trusted network (or same host as the edge process):
+
+- **Nominatim (geocoder)**: expose `/nominatim/search` compatible endpoint.
+- **OSRM (router)**: expose `/route/v1/driving/{lon},{lat};{lon},{lat}` endpoint.
+- Configure `navigation.nominatim_url` and `navigation.osrm_url` to those internal addresses.
+- Keep `navigation.allow_public_endpoints: false` in production.
+- Set a valid operational contact in `navigation.user_agent` and preserve rate limiting (`navigation.min_request_interval_sec >= 1.0`).
+
+Minimal validation checks after deployment:
+
+```bash
+curl -fsS "http://<nominatim-host>/nominatim/search?q=Seattle&format=json&limit=1"
+curl -fsS "http://<osrm-host>/route/v1/driving/-122.33,47.60;-122.20,47.61?overview=false"
+```
+
 ### API Security Defaults
 
 - API binds to `127.0.0.1:8080` by default for single-user/local deployments.

@@ -48,6 +48,42 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _is_public_endpoint(url: str) -> bool:
+    return "openstreetmap.org" in url or "project-osrm.org" in url
+
+
+def _resolve_navigation_endpoints(cfg: dict) -> tuple[str, str]:
+    mode = str(cfg.get("mode", "hybrid")).lower()
+    allow_public = bool(cfg.get("allow_public_endpoints", False))
+
+    self_geocoder = str(cfg.get("nominatim_url", "")).strip()
+    self_router = str(cfg.get("osrm_url", "")).strip()
+    public_geocoder = str(cfg.get("public_nominatim_url", "https://nominatim.openstreetmap.org/search")).strip()
+    public_router = str(cfg.get("public_osrm_url", "https://router.project-osrm.org")).strip()
+
+    geocoder_url = ""
+    router_url = ""
+
+    if mode == "offline":
+        logger.info("Navigation mode=offline: remote geocode/route lookups disabled")
+    elif mode == "online":
+        geocoder_url = public_geocoder or self_geocoder
+        router_url = public_router or self_router
+    else:  # hybrid default
+        geocoder_url = self_geocoder
+        router_url = self_router
+        if allow_public and not geocoder_url:
+            geocoder_url = public_geocoder
+        if allow_public and not router_url:
+            router_url = public_router
+
+    if not allow_public:
+        if _is_public_endpoint(geocoder_url):
+            geocoder_url = ""
+        if _is_public_endpoint(router_url):
+            router_url = ""
+
+    return geocoder_url, router_url
 def _extract_bearer_token(auth_header: str | None) -> str | None:
     """Extract bearer token from Authorization header when present."""
     if not auth_header:
@@ -237,17 +273,28 @@ def create_app(
 ) -> FastAPI:
     """Build and return the FastAPI application."""
     cfg = config or {}
+    geocoder_url, router_url = _resolve_navigation_endpoints(cfg)
     api_cfg = api_config or {}
 
     allowed_origins = _resolve_cors_origins(api_cfg)
     auth = _parse_auth_config(api_cfg)
 
     geocoder = Geocoder(
-        nominatim_url=cfg.get("nominatim_url", "https://nominatim.openstreetmap.org"),
+        nominatim_url=geocoder_url,
         cache_path=cfg.get("geocode_cache_path", "data/geocode_cache.json"),
+        rate_limit_delay=float(cfg.get("min_request_interval_sec", 1.1)),
+        timeout_sec=float(cfg.get("timeout_sec", 10)),
+        max_retries=int(cfg.get("max_retries", 3)),
+        backoff_base_sec=float(cfg.get("backoff_base_sec", 0.75)),
+        user_agent=cfg.get("user_agent", "Seen-It-First-Edge/1.0 (edge-navigation; ops@example.local)"),
     )
     router_svc = Router(
-        osrm_url=cfg.get("osrm_url", "https://router.project-osrm.org"),
+        osrm_url=router_url,
+        timeout_sec=float(cfg.get("timeout_sec", 10)),
+        max_retries=int(cfg.get("max_retries", 3)),
+        backoff_base_sec=float(cfg.get("backoff_base_sec", 0.75)),
+        user_agent=cfg.get("user_agent", "Seen-It-First-Edge/1.0 (edge-navigation; ops@example.local)"),
+        min_request_interval_sec=float(cfg.get("min_request_interval_sec", 1.1)),
     )
     arrival = ArrivalDetector(
         radius_m=cfg.get("arrival_radius_m", 80.0),
