@@ -15,6 +15,7 @@ mode switching (navigation-triggered scanning suppression).
 
 import logging
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -241,6 +242,9 @@ class InferenceScheduler:
 
     def set_detection_fps(self, fps: int):
         """Dynamically adjust detection FPS (for thermal throttling)."""
+        if fps <= 0:
+            raise ValueError("Detection FPS must be > 0")
+
         if fps != self._current_det_fps:
             logger.info("Detection FPS adjusted: %d → %d", self._current_det_fps, fps)
             self._current_det_fps = fps
@@ -266,6 +270,48 @@ class InferenceScheduler:
 # ---------------------------------------------------------------------------
 
 class _NoOpFusionEngine:
+    """
+    Fallback fusion engine used when no DetectionFusionEngine is provided.
+
+    Keeps lightweight counters so tests and diagnostics can confirm detections
+    are still flowing through the pipeline even when fusion is disabled.
+    """
+
+    def __init__(self):
+        self.detection_count = 0
+        self.last_detection = None
+
+    def add_detection(self, detection):
+        self.detection_count += 1
+        self.last_detection = detection
+
+
+class _NoOpEventPublisher:
+    """Fallback publisher that records recent events in memory."""
+
+    def __init__(self, max_events: int = 200):
+        self._events = deque(maxlen=max_events)
+        self._loop = None
+        self._ws_manager = None
+
+    def publish_detection(self, data):
+        self._events.append({"event": "DETECTION", **data})
+
+    def publish_alert(self, data):
+        self._events.append({"event": "ALERT", **data})
+
+    def publish_system_event(self, event_type, data):
+        self._events.append({"event": event_type, **data})
+
+    def set_event_loop(self, loop):
+        self._loop = loop
+
+    def set_ws_manager(self, ws_manager):
+        self._ws_manager = ws_manager
+
+    @property
+    def events(self) -> list[dict]:
+        return list(self._events)
     """Fallback fusion engine used when a real engine is not wired."""
 
     def __init__(self):
