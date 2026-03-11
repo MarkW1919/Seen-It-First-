@@ -10,6 +10,7 @@ Output locations:
     models/plate/plate.engine       (YOLOv8n-LP, FP16)
     models/classifier/classifier.engine  (YOLOv8n-cls, FP16)
     models/ocr/ocr.engine           (PaddleOCR PP-OCRv4 rec, FP16)
+    models/onnx/*.onnx              (runtime ONNX assets)
 
 Requires:
     ultralytics      — YOLOv8 ONNX export
@@ -36,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MODELS_RAW = REPO_ROOT / "models" / "raw"
-MODELS_ONNX = MODELS_RAW / "onnx"
+MODELS_ONNX = REPO_ROOT / "models" / "onnx"
 
 # Final engine output paths (must match system.yaml)
 ENGINE_PATHS = {

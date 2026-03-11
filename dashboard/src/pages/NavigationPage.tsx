@@ -257,9 +257,17 @@ export default function NavigationPage() {
   // ------------------------------------------------------------------
   // Navigation status polling (only while navigating)
   // ------------------------------------------------------------------
-  useQuery<NavStatus>({
+  const { data: navStatus } = useQuery<NavStatus>({
     queryKey: ["nav-status"],
-    queryFn: () => fetch("/navigation/status").then((r) => r.json()),
+    queryFn: async () => {
+      const res = await fetch("/navigation/status");
+      if (!res.ok) throw new Error(`Failed to fetch navigation status (${res.status})`);
+      return res.json() as Promise<NavStatus>;
+    },
+    refetchInterval: navigating ? 5000 : false,
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json() as Promise<NavStatus>;
+    },
     refetchInterval: navigating ? 5000 : false,
     enabled: !isPreview && navigating,
   });
@@ -272,10 +280,42 @@ export default function NavigationPage() {
       setArrived(true);
       setNavigating(false);
       qc.invalidateQueries({ queryKey: ["nav-status"] });
+      return;
+    }
+
+    if (ev.event === "STATUS") {
+      setNavigating(ev.navigating);
+      setArrived(ev.arrived);
     }
   }, [qc]);
 
   useWebSocket(handleWsEvent, !isPreview);
+
+  // ------------------------------------------------------------------
+  // Hydrate local UI state from backend status snapshots.
+  // ------------------------------------------------------------------
+  useEffect(() => {
+    if (!navStatus) return;
+    setNavigating(navStatus.navigating);
+    setArrived(navStatus.arrival.arrived);
+
+    const destination = navStatus.destination;
+    if (destination) {
+      setGeocoded((prev) => {
+        if (prev && prev.lat === destination.lat && prev.lon === destination.lon) {
+          return prev;
+        }
+        return {
+          lat: destination.lat,
+          lon: destination.lon,
+          display_name: destination.display_name,
+        };
+      });
+      setArrivalRadiusFt(
+        typeof destination.radius_ft === "number" ? destination.radius_ft : RADIUS_DEFAULT_FT,
+      );
+    }
+  }, [navStatus]);
 
   // ------------------------------------------------------------------
   // Browser Geolocation — watchPosition updates the map marker only.
@@ -303,6 +343,7 @@ export default function NavigationPage() {
   // becomes false (navigation stopped or ARRIVED received).
   // ------------------------------------------------------------------
   useEffect(() => {
+    if (!navigating) return;
     if (isPreview || (!navigating && !arrived)) return;
 
     const interval = setInterval(() => {
@@ -515,7 +556,6 @@ export default function NavigationPage() {
             <input
               style={styles.input}
               type="text"
-              placeholder="Enter address or place name…"
               value={address}
               onChange={(e) => setAddress(e.target.value)}
               onKeyDown={(e) => {
@@ -525,6 +565,9 @@ export default function NavigationPage() {
               }}
               disabled={navigating || isLoading || isPreview}
             />
+            <div style={{ color: "#94a3b8", fontSize: "0.75rem", marginTop: "0.5rem", marginBottom: "0.5rem" }}>
+              Enter address or place name, then press Enter or Search.
+            </div>
             <button
               style={{ ...styles.btn, ...styles.btnSecondary }}
               onClick={() => address.trim() && !isPreview && geocodeMutation.mutate(address.trim())}

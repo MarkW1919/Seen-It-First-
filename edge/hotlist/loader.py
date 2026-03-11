@@ -12,6 +12,9 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# Unified normalizer used by loader and matcher.
+_PLATE_NORMALIZE_RE = re.compile(r"[^A-Z0-9]")
+
 
 class HotlistLoader:
     """
@@ -45,17 +48,41 @@ class HotlistLoader:
             return False
 
         new_plates: dict[str, dict] = {}
-        with open(self.file_path, "r", newline="") as f:
+        try:
+            with open(self.file_path, "r", newline="") as f:
+                reader = csv.reader(f)
+                for row_num, row in enumerate(reader, 1):
+                    if not row or row[0].startswith("#"):
+                        continue  # skip empty lines and comments
+                    plate = self._normalize(row[0])
+                    if not plate:
+                        logger.warning("Hotlist line %d: empty plate, skipping", row_num)
+                        continue
+                    reason = row[1].strip() if len(row) > 1 else "unknown"
+                    priority = row[2].strip() if len(row) > 2 else "normal"
+                    new_plates[plate] = {"reason": reason, "priority": priority}
+        except (csv.Error, UnicodeDecodeError, OSError):
+            logger.exception("Failed to load hotlist CSV: %s", self.file_path)
+            return False
+        with open(self.file_path, "r", newline="", encoding="utf-8") as f:
             reader = csv.reader(f)
             for row_num, row in enumerate(reader, 1):
-                if not row or row[0].startswith("#"):
+                if not row:
+                    continue
+                first_cell = row[0].strip()
+                if not first_cell or first_cell.startswith("#"):
                     continue  # skip empty lines and comments
-                plate = self._normalize(row[0])
+
+                plate = self._normalize(first_cell)
                 if not plate:
                     logger.warning("Hotlist line %d: empty plate, skipping", row_num)
                     continue
-                reason = row[1].strip() if len(row) > 1 else "unknown"
-                priority = row[2].strip() if len(row) > 2 else "normal"
+
+                if plate in new_plates:
+                    logger.warning("Hotlist line %d: duplicate plate %s, overriding prior entry", row_num, plate)
+
+                reason = row[1].strip() if len(row) > 1 and row[1].strip() else "unknown"
+                priority = row[2].strip() if len(row) > 2 and row[2].strip() else "normal"
                 new_plates[plate] = {"reason": reason, "priority": priority}
 
         self._plates = new_plates
@@ -76,13 +103,16 @@ class HotlistLoader:
 
         if current_mtime > self._last_mtime:
             logger.info("Hotlist file changed, reloading")
-            return self.load()
+            loaded = self.load()
+            if not loaded:
+                logger.warning("Hotlist reload failed; continuing with previous in-memory hotlist")
+            return loaded
         return False
 
     @staticmethod
     def _normalize(plate: str) -> str:
         """Normalize a plate string: uppercase, strip spaces and non-alnum."""
-        return re.sub(r"[^A-Z0-9]", "", plate.upper().strip())
+        return _PLATE_NORMALIZE_RE.sub("", plate.upper().strip())
 
     @property
     def plates(self) -> set[str]:

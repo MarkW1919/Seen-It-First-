@@ -178,12 +178,16 @@ class CameraCapture:
         """
         Return the most recent frame from the queue, or None if empty.
 
-        Equivalent to get_frame(); provided so call-sites can use either name.
+        Drains any backlog and returns the newest packet to keep inference
+        latency low under load.
         """
-        try:
-            return self._frame_queue.get_nowait()
-        except queue.Empty:
-            return None
+        latest: Optional[FramePacket] = None
+        while True:
+            try:
+                latest = self._frame_queue.get_nowait()
+            except queue.Empty:
+                break
+        return latest
 
     def get_frame(self) -> Optional[FramePacket]:
         """Alias for read_frame()."""

@@ -19,6 +19,7 @@ _DEFAULT_ROOT           = Path("data/evidence")
 _DEFAULT_RETENTION_DAYS = 30
 _CHECK_INTERVAL_S       = 12 * 3600   # 12 hours
 _CATEGORIES             = ("vehicles", "plates", "composite")
+_IMAGE_SUFFIXES         = (".jpg", ".jpeg")
 
 
 class MediaRetentionManager:
@@ -39,7 +40,9 @@ class MediaRetentionManager:
         retention_days: int = _DEFAULT_RETENTION_DAYS,
     ):
         self._root           = Path(evidence_root) if evidence_root else _DEFAULT_ROOT
-        self._retention_days = retention_days
+        self._retention_days = max(1, int(retention_days))
+        if retention_days < 1:
+            logger.warning("Invalid retention_days=%s; defaulting to 1 day", retention_days)
         self._stop_event     = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -63,9 +66,11 @@ class MediaRetentionManager:
             self._retention_days,
         )
 
-    def stop(self):
-        """Signal the sweep thread to exit (non-blocking)."""
+    def stop(self, join_timeout_s: float = 2.0):
+        """Signal the sweep thread to exit and optionally wait briefly."""
         self._stop_event.set()
+        if self._thread is not None and self._thread.is_alive():
+            self._thread.join(timeout=max(0.0, join_timeout_s))
 
     def run_once(self):
         """
@@ -101,7 +106,9 @@ class MediaRetentionManager:
             if not cat_dir.exists():
                 continue
 
-            for file_path in cat_dir.rglob("*.jpg"):
+            for file_path in cat_dir.rglob("*"):
+                if not file_path.is_file() or file_path.suffix.lower() not in _IMAGE_SUFFIXES:
+                    continue
                 try:
                     if file_path.stat().st_mtime < cutoff:
                         file_path.unlink()
