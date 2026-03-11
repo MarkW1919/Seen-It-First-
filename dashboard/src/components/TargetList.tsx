@@ -22,14 +22,22 @@ export function TargetList({ scanning, previewTargets }: Props) {
   const [error, setError]       = useState<string | null>(null);
   const [loading, setLoading]   = useState(false);
 
-  const fetchTargets = useCallback(async () => {
+  const fetchTargets = useCallback(async (signal?: AbortSignal) => {
+    setLoading(true);
     try {
+      const res = await fetch("/navigation/targets", { signal });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data: TargetsResponse = await res.json();
+      if (data.error) throw new Error(data.error);
+      setVehicles(data.targets.slice(0, MAX_TARGETS));
+      setError(null);
       const res = await fetch("/navigation/targets");
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: TargetsResponse = await res.json();
       setVehicles((data.targets ?? []).slice(0, MAX_TARGETS));
       setError(data.error ?? null);
     } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
       setError(err instanceof Error ? err.message : "Fetch failed");
     } finally {
       setLoading(false);
@@ -40,9 +48,20 @@ export function TargetList({ scanning, previewTargets }: Props) {
   useEffect(() => {
     if (!scanning) {
       setVehicles([]);
+      setError(null);
+      setLoading(false);
       return;
     }
 
+    const controller = new AbortController();
+    fetchTargets(controller.signal);
+
+    const interval = setInterval(() => fetchTargets(controller.signal), REFRESH_INTERVAL_MS);
+    return () => {
+      controller.abort();
+      clearInterval(interval);
+    };
+  }, [scanning, fetchTargets]);
     if (previewTargets && previewTargets.length > 0) {
       setVehicles(previewTargets.slice(0, MAX_TARGETS));
       setLoading(false);

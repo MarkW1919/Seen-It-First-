@@ -257,10 +257,14 @@ export default function NavigationPage() {
   // ------------------------------------------------------------------
   // Navigation status polling (only while navigating)
   // ------------------------------------------------------------------
-  useQuery<NavStatus>({
+  const { data: navStatus } = useQuery<NavStatus>({
     queryKey: ["nav-status"],
     queryFn: async () => {
       const res = await fetch("/navigation/status");
+      if (!res.ok) throw new Error(`Failed to fetch navigation status (${res.status})`);
+      return res.json() as Promise<NavStatus>;
+    },
+    refetchInterval: navigating ? 5000 : false,
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json() as Promise<NavStatus>;
     },
@@ -276,10 +280,42 @@ export default function NavigationPage() {
       setArrived(true);
       setNavigating(false);
       qc.invalidateQueries({ queryKey: ["nav-status"] });
+      return;
+    }
+
+    if (ev.event === "STATUS") {
+      setNavigating(ev.navigating);
+      setArrived(ev.arrived);
     }
   }, [qc]);
 
   useWebSocket(handleWsEvent, !isPreview);
+
+  // ------------------------------------------------------------------
+  // Hydrate local UI state from backend status snapshots.
+  // ------------------------------------------------------------------
+  useEffect(() => {
+    if (!navStatus) return;
+    setNavigating(navStatus.navigating);
+    setArrived(navStatus.arrival.arrived);
+
+    const destination = navStatus.destination;
+    if (destination) {
+      setGeocoded((prev) => {
+        if (prev && prev.lat === destination.lat && prev.lon === destination.lon) {
+          return prev;
+        }
+        return {
+          lat: destination.lat,
+          lon: destination.lon,
+          display_name: destination.display_name,
+        };
+      });
+      setArrivalRadiusFt(
+        typeof destination.radius_ft === "number" ? destination.radius_ft : RADIUS_DEFAULT_FT,
+      );
+    }
+  }, [navStatus]);
 
   // ------------------------------------------------------------------
   // Browser Geolocation — watchPosition updates the map marker only.
