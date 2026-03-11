@@ -62,6 +62,7 @@ class Geocoder:
         self._url = nominatim_url.rstrip("/")
         self._cache_path = Path(cache_path)
         self._rate_limit = rate_limit_delay
+        # Monotonic timestamp of last API call (used only for rate limiting).
         self._last_request_at: float = 0.0
         self._cache: dict[str, dict] = {}
         self._load_cache()
@@ -132,7 +133,9 @@ class Geocoder:
         except Exception as exc:
             raise GeocoderError(f"Nominatim request failed: {exc}") from exc
         finally:
-            self._last_request_at = time.time()
+            # Keep rate-limit timing on the monotonic clock to avoid
+            # wall-clock jumps and mixed-clock math bugs.
+            self._last_request_at = time.monotonic()
 
         if not body:
             raise GeocoderError(f"No results for address: '{address}'")
