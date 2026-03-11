@@ -119,21 +119,25 @@ python -m edge.main
 
 ## Production Deployment
 
+Use the installer script as the **canonical deployment path**:
+
 ```bash
-# Copy to /opt
-sudo cp -r . /opt/seen-it-first
-sudo useradd -r -s /bin/false sif
-sudo chown -R sif:sif /opt/seen-it-first
+# From repository root
+sudo ./scripts/install_edge_service.sh
+```
 
-# Install systemd service
-sudo cp systemd/seen-it-first-edge.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable seen-it-first-edge
-sudo systemctl start seen-it-first-edge
+Dry-run preview (no changes applied):
 
-# Check status
-sudo systemctl status seen-it-first-edge
-journalctl -u seen-it-first-edge -f
+```bash
+./scripts/install_edge_service.sh --dry-run
+```
+
+After installation:
+
+```bash
+sudo systemctl start seen-it-first-edge.service
+sudo systemctl status seen-it-first-edge.service
+sudo journalctl -u seen-it-first-edge.service -f
 ```
 
 `seen-it-first-edge.service` runs as `Type=simple` without systemd watchdog heartbeats.
