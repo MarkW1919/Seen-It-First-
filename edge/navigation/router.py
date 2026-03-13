@@ -1,28 +1,37 @@
 """
-OSRM routing: (start_lat, start_lon, dest_lat, dest_lon) → route.
+Offline router: (start_lat, start_lon, dest_lat, dest_lon) → route.
 
-Uses the public OSRM demo server by default.  For production, point
-osrm_url at a self-hosted OSRM instance.
+Fully offline — no network calls, no external services.
 
-Decodes OSRM's Encoded Polyline Algorithm (precision 5) into a list
-of [lat, lon] coordinate pairs suitable for Leaflet.
+Computes:
+  • Straight-line (great-circle) distance via the Haversine formula.
+  • Estimated driving duration using a conservative average speed.
+  • A two-point polyline [start, end] suitable for Leaflet display.
+  • ISO-8601 ETA based on current UTC time + estimated duration.
 
-OSRM route endpoint:
-    GET /route/v1/driving/{lon},{lat};{lon},{lat}
-         ?overview=full&geometries=polyline&steps=false
+Average speed assumptions (conservative urban/suburban driving):
+  • < 1 km   → 20 km/h  (city intersections / parking lots)
+  • 1–10 km  → 40 km/h  (city streets)
+  • > 10 km  → 80 km/h  (highway / mixed)
 """
 
-import json
 import logging
 import math
-import urllib.error
-import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 
 logger = logging.getLogger(__name__)
 
-_OSRM_PUBLIC = "https://router.project-osrm.org"
+# Earth radius (mean, WGS-84)
+_EARTH_RADIUS_M = 6_371_000.0
+
+# Speed tiers (metres/second)
+_SPEED_URBAN_MS    = 20_000 / 3600   # 20 km/h → ~5.56 m/s
+_SPEED_CITY_MS     = 40_000 / 3600   # 40 km/h → ~11.11 m/s
+_SPEED_HIGHWAY_MS  = 80_000 / 3600   # 80 km/h → ~22.22 m/s
+
+_TIER_1_M = 1_000.0   # < 1 km  → urban speed
+_TIER_2_M = 10_000.0  # < 10 km → city speed  (≥ 10 km → highway speed)
 
 
 @dataclass
@@ -40,14 +49,14 @@ class RouterError(Exception):
 
 class Router:
     """
-    OSRM driving route calculator.
+    Offline driving route estimator using Haversine distance.
 
     Args:
-        osrm_url: Base URL of OSRM instance.
+        osrm_url: Accepted for API compatibility but ignored in offline mode.
     """
 
-    def __init__(self, osrm_url: str = _OSRM_PUBLIC):
-        self._url = osrm_url.rstrip("/")
+    def __init__(self, osrm_url: str = ""):  # ignored — kept for API compat
+        pass
 
     def get_route(
         self,
@@ -55,94 +64,78 @@ class Router:
         dest_lat: float,  dest_lon: float,
     ) -> RouteResult:
         """
-        Compute a driving route between two GPS points.
+        Compute an offline route estimate between two GPS points.
+
+        Uses straight-line Haversine distance and a speed tier based on
+        the total distance to estimate travel time.
 
         Args:
             start_lat / start_lon: Current position.
             dest_lat  / dest_lon : Destination position.
 
         Returns:
-            RouteResult with polyline (Leaflet-ready), distance, duration, ETA.
+            RouteResult with a 2-point polyline, distance, duration, and ETA.
 
         Raises:
-            RouterError: On OSRM errors or no route found.
+            RouterError: If inputs are out-of-range.
         """
-        coords = f"{start_lon},{start_lat};{dest_lon},{dest_lat}"
-        url = (
-            f"{self._url}/route/v1/driving/{coords}"
-            "?overview=full&geometries=polyline&steps=false"
-        )
-        req = urllib.request.Request(
-            url,
-            headers={"User-Agent": "Seen-It-First-Edge/1.0"},
-        )
+        self._validate(start_lat, start_lon, "start")
+        self._validate(dest_lat, dest_lon, "destination")
 
-        try:
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                data = json.loads(resp.read().decode())
-        except urllib.error.HTTPError as exc:
-            raise RouterError(f"OSRM HTTP {exc.code}") from exc
-        except Exception as exc:
-            raise RouterError(f"OSRM request failed: {exc}") from exc
-
-        if data.get("code") != "Ok" or not data.get("routes"):
-            raise RouterError(f"OSRM returned: {data.get('code', 'unknown')}")
-
-        route = data["routes"][0]
-        distance_m = float(route["distance"])
-        duration_s = float(route["duration"])
+        distance_m = _haversine_m(start_lat, start_lon, dest_lat, dest_lon)
+        duration_s = _estimate_duration_s(distance_m)
         eta = (
             datetime.now(tz=timezone.utc) + timedelta(seconds=duration_s)
         ).isoformat()
 
-        polyline = self._decode_polyline(route["geometry"])
+        polyline = [
+            [start_lat, start_lon],
+            [dest_lat,  dest_lon],
+        ]
+
+        logger.debug(
+            "Offline route: %.1f m, %.0f s → ETA %s", distance_m, duration_s, eta
+        )
 
         return RouteResult(
             polyline=polyline,
-            distance_m=distance_m,
-            duration_s=duration_s,
+            distance_m=round(distance_m, 1),
+            duration_s=round(duration_s, 1),
             eta_iso=eta,
         )
 
-    # ------------------------------------------------------------------
-    # Polyline decoder (Google / OSRM Encoded Polyline Algorithm)
-    # ------------------------------------------------------------------
-
     @staticmethod
-    def _decode_polyline(encoded: str) -> list[list[float]]:
-        """
-        Decode an encoded polyline string (precision 5) to [[lat, lon], ...].
+    def _validate(lat: float, lon: float, label: str) -> None:
+        if not (-90.0 <= lat <= 90.0):
+            raise RouterError(f"Invalid {label} latitude: {lat}")
+        if not (-180.0 <= lon <= 180.0):
+            raise RouterError(f"Invalid {label} longitude: {lon}")
 
-        Reference: https://developers.google.com/maps/documentation/utilities/polylinealgorithm
-        """
-        points: list[list[float]] = []
-        index = lat = lng = 0
 
-        while index < len(encoded):
-            # Decode latitude delta
-            result, shift = 0, 0
-            while True:
-                b = ord(encoded[index]) - 63
-                index += 1
-                result |= (b & 0x1F) << shift
-                shift += 5
-                if b < 0x20:
-                    break
-            dlat = -(result >> 1) if result & 1 else result >> 1
-            lat += dlat
+# ---------------------------------------------------------------------------
+# Module-level helpers
+# ---------------------------------------------------------------------------
 
-            # Decode longitude delta
-            result, shift = 0, 0
-            while True:
-                b = ord(encoded[index]) - 63
-                index += 1
-                result |= (b & 0x1F) << shift
-                shift += 5
-                if b < 0x20:
-                    break
-            dlng = -(result >> 1) if result & 1 else result >> 1
-            lng += dlng
+def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Return great-circle distance in metres between two WGS-84 points."""
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    d_phi = math.radians(lat2 - lat1)
+    d_lam = math.radians(lon2 - lon1)
 
-            points.append([lat / 1e5, lng / 1e5])
+    a = (
+        math.sin(d_phi / 2) ** 2
+        + math.cos(phi1) * math.cos(phi2) * math.sin(d_lam / 2) ** 2
+    )
+    return _EARTH_RADIUS_M * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
-        return points
+
+def _estimate_duration_s(distance_m: float) -> float:
+    """Estimate driving duration in seconds using distance-based speed tiers."""
+    if distance_m < _TIER_1_M:
+        speed = _SPEED_URBAN_MS
+    elif distance_m < _TIER_2_M:
+        speed = _SPEED_CITY_MS
+    else:
+        speed = _SPEED_HIGHWAY_MS
+    return distance_m / speed

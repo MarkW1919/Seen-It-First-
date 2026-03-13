@@ -23,10 +23,12 @@ Run alongside the edge pipeline via uvicorn in a daemon thread:
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
@@ -221,6 +223,19 @@ def create_app(
 
     app.state.nav = nav_state
     app.include_router(nav_router)
+
+    # Serve the built dashboard SPA when the dist folder is present.
+    # Run `npm run build` in the dashboard/ directory to produce it.
+    # Falls back gracefully when the build is absent (dev workflow).
+    _dashboard_dist = Path(__file__).resolve().parents[3] / "dashboard" / "dist"
+    if _dashboard_dist.is_dir():
+        app.mount("/", StaticFiles(directory=str(_dashboard_dist), html=True), name="dashboard")
+        logger.info("Dashboard static files served from %s", _dashboard_dist)
+    else:
+        logger.info(
+            "Dashboard dist not found at %s — run 'npm run build' in dashboard/ "
+            "to enable production serving", _dashboard_dist,
+        )
 
     @app.websocket("/ws")
     async def websocket_endpoint(ws: WebSocket):

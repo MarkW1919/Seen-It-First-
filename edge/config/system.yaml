@@ -73,8 +73,9 @@ inference:
     pretrained: true  # ImageNet pretrained YOLOv8n-cls, no custom training needed
     # Budget: ~15 MB VRAM
 
-  # ONNX sub-models for vehicle intelligence (all optional — graceful fallback)
-  # Place downloaded .onnx files in edge/models/ before running.
+  # ONNX sub-models for vehicle intelligence (REQUIRED — the service will not
+  # start if any model file is absent).  Place .onnx files in edge/models/
+  # before running.
   vehicle_classifier:
     model_path: "edge/models/vehicle_make_model_classifier.onnx"
     label_path: "edge/models/vehicle_make_model_labels.json"
@@ -84,13 +85,11 @@ inference:
   vehicle_color:
     model_path: "edge/models/vehicle_color_model.onnx"
     input_size: 224
-    # Falls back to HSV histogram when model file is absent
 
   vehicle_reid:
     model_path: "edge/models/vehicle_embedding_model.onnx"
     input_size: 128
     embedding_dim: 128
-    # Falls back to text-only fingerprint hash when model file is absent
 
   tracker:
     max_age: 30          # frames before track deletion
@@ -137,12 +136,12 @@ storage:
 navigation:
   # Arrival geofence radius — pipeline activates when vehicle is this close
   arrival_radius_m: 80
-  # OpenStreetMap Nominatim geocoder (replace with self-hosted for production)
-  nominatim_url: "https://nominatim.openstreetmap.org"
-  # OSRM routing (replace with self-hosted for production)
-  osrm_url: "https://router.project-osrm.org"
-  # Local disk cache for geocode results
+  # Offline geocoder: accepts "lat,lon" coordinate strings or cached addresses.
+  # No network access required.  Pre-populate data/geocode_cache.json with
+  # common destinations before deployment.
   geocode_cache_path: "data/geocode_cache.json"
+  # Offline router: uses Haversine straight-line distance + speed-tier ETA.
+  # No external routing service is used.
 
 api:
   host: "0.0.0.0"

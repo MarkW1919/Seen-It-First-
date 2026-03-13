@@ -51,6 +51,9 @@ class OnnxEngine:
 
     def load(self) -> bool:
         """Load the ONNX model and create an InferenceSession."""
+        if self._loaded:
+            return True  # already loaded — skip redundant session creation
+
         if not _ORT_AVAILABLE:
             logger.error("onnxruntime not available — cannot load %s", self.model_path)
             return False

@@ -1,9 +1,16 @@
 """
 Geocoder: address string → latitude / longitude.
 
-Uses OpenStreetMap Nominatim API (free, no key required).
-Results are cached to a local JSON file to honour Nominatim's
-1-request/second rate limit and avoid redundant lookups.
+Offline-first design — no network calls.
+
+Two resolution strategies (in order):
+  1. Coordinate string:  "37.7749,-122.4194" or "37.7749, -122.4194"
+     → parsed directly; no cache lookup needed.
+  2. Disk cache hit:     addresses previously geocoded and stored locally.
+     → returns the cached result (TTL: 24 hours).
+
+If neither strategy resolves the input a GeocoderError is raised with
+a message explaining how to supply coordinates directly.
 
 Cache format:
     {
@@ -18,18 +25,20 @@ Cache format:
 
 import json
 import logging
+import re
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 _CACHE_TTL_SEC = 86_400  # 24 hours
-_NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
-_USER_AGENT = "Seen-It-First-Edge/1.0 (edge-navigation)"
+
+# Matches "lat,lon" or "lat, lon" with optional leading/trailing whitespace.
+# Accepts optional sign and decimal point for each component.
+_COORD_RE = re.compile(
+    r"^\s*([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)\s*$"
+)
 
 
 @dataclass
@@ -45,24 +54,22 @@ class GeocoderError(Exception):
 
 class Geocoder:
     """
-    Nominatim geocoder with local disk cache.
+    Offline geocoder — resolves addresses without any network calls.
 
     Args:
-        nominatim_url: Base URL for Nominatim (override for self-hosted).
-        cache_path: Path to JSON cache file.
-        rate_limit_delay: Minimum seconds between API calls (Nominatim policy ≥ 1 s).
+        cache_path: Path to JSON cache file (pre-populated entries are served
+                    directly; no Nominatim or other external API is called).
+        nominatim_url: Accepted for API compatibility but ignored in offline mode.
+        rate_limit_delay: Accepted for API compatibility but ignored.
     """
 
     def __init__(
         self,
-        nominatim_url: str = _NOMINATIM_URL,
+        nominatim_url: str = "",        # ignored — kept for API compatibility
         cache_path: str | Path = "data/geocode_cache.json",
-        rate_limit_delay: float = 1.1,
+        rate_limit_delay: float = 0.0,  # ignored — no network calls
     ):
-        self._url = nominatim_url.rstrip("/")
         self._cache_path = Path(cache_path)
-        self._rate_limit = rate_limit_delay
-        self._last_request_at: float = 0.0
         self._cache: dict[str, dict] = {}
         self._load_cache()
 
@@ -72,19 +79,38 @@ class Geocoder:
 
     def geocode(self, address: str) -> GeocoderResult:
         """
-        Convert an address string to lat/lon.
+        Resolve an address string to lat/lon without network access.
 
-        Checks disk cache first; calls Nominatim only on cache miss.
-
-        Args:
-            address: Human-readable address or place name.
-
-        Returns:
-            GeocoderResult with lat, lon, display_name.
+        Accepts:
+          • Coordinate pair:  "37.7749,-122.4194"  →  parsed directly.
+          • Cached address:   any address previously stored in the disk cache.
 
         Raises:
-            GeocoderError: If the address cannot be resolved.
+            GeocoderError: When the address is not a coordinate pair and is
+                           not present in the local cache.  The error message
+                           instructs the caller to supply coordinates directly
+                           (e.g. "37.7749,-122.4194") or use
+                           POST /navigation/start with dest_lat / dest_lon.
         """
+        # ── Strategy 1: coordinate string ──────────────────────────────
+        coord = _COORD_RE.match(address)
+        if coord:
+            lat = float(coord.group(1))
+            lon = float(coord.group(2))
+            if not (-90.0 <= lat <= 90.0):
+                raise GeocoderError(
+                    f"Latitude {lat} out of range [-90, 90].  "
+                    "Provide coordinates as 'latitude,longitude'."
+                )
+            if not (-180.0 <= lon <= 180.0):
+                raise GeocoderError(
+                    f"Longitude {lon} out of range [-180, 180].  "
+                    "Provide coordinates as 'latitude,longitude'."
+                )
+            logger.debug("Geocode from coordinate string: %.6f, %.6f", lat, lon)
+            return GeocoderResult(lat=lat, lon=lon, display_name=address.strip())
+
+        # ── Strategy 2: disk cache ──────────────────────────────────────
         key = address.strip().lower()
         cached = self._cache.get(key)
         if cached:
@@ -97,58 +123,33 @@ class Geocoder:
                     display_name=cached["display_name"],
                 )
 
-        result = self._nominatim_request(address)
+        # ── No resolution available ─────────────────────────────────────
+        raise GeocoderError(
+            f"Cannot resolve '{address}' in offline mode.  "
+            "Supply coordinates directly as 'latitude,longitude' "
+            "(e.g. '37.7749,-122.4194'), or use POST /navigation/start "
+            "with dest_lat and dest_lon fields."
+        )
+
+    def add_to_cache(self, address: str, lat: float, lon: float, display_name: str = "") -> None:
+        """
+        Manually add an address → coordinate mapping to the disk cache.
+
+        Useful for pre-populating common destinations before deployment.
+        """
+        key = address.strip().lower()
         self._cache[key] = {
-            "lat": result.lat,
-            "lon": result.lon,
-            "display_name": result.display_name,
+            "lat": lat,
+            "lon": lon,
+            "display_name": display_name or address.strip(),
             "cached_at": time.time(),
         }
         self._save_cache()
-        return result
+        logger.info("Geocode cache updated: %s → (%.6f, %.6f)", address, lat, lon)
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
-
-    def _nominatim_request(self, address: str) -> GeocoderResult:
-        """Call Nominatim, honouring the rate limit."""
-        self._wait_for_rate_limit()
-
-        params = urllib.parse.urlencode({
-            "q": address,
-            "format": "json",
-            "limit": 1,
-            "addressdetails": 0,
-        })
-        url = f"{self._url}?{params}"
-        req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
-
-        try:
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                body = json.loads(resp.read().decode())
-        except urllib.error.HTTPError as exc:
-            raise GeocoderError(f"Nominatim HTTP {exc.code}: {address}") from exc
-        except Exception as exc:
-            raise GeocoderError(f"Nominatim request failed: {exc}") from exc
-        finally:
-            self._last_request_at = time.time()
-
-        if not body:
-            raise GeocoderError(f"No results for address: '{address}'")
-
-        hit = body[0]
-        return GeocoderResult(
-            lat=float(hit["lat"]),
-            lon=float(hit["lon"]),
-            display_name=hit.get("display_name", address),
-        )
-
-    def _wait_for_rate_limit(self):
-        """Block until at least `_rate_limit` seconds since last call."""
-        wait = self._rate_limit - (time.monotonic() - self._last_request_at)
-        if wait > 0:
-            time.sleep(wait)
 
     def _load_cache(self):
         if self._cache_path.exists():

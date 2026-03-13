@@ -193,6 +193,24 @@ class EdgeService:
         reid_model  = VehicleReID(reid_cfg)
         fp_gen      = VehicleFingerprintGenerator()
 
+        # ONNX sub-models are required — fail fast if any cannot be loaded.
+        # Each model must have its .onnx file present in edge/models/.
+        onnx_ok = True
+        for onnx_name, onnx_model in [
+            ("vehicle_make_model_classifier", clf_model),
+            ("vehicle_color_model",           color_det),
+            ("vehicle_embedding_model",       reid_model),
+        ]:
+            if not onnx_model.load():
+                logger.error(
+                    "Required ONNX model failed to load: %s.onnx  "
+                    "Place the model file in edge/models/ and restart.",
+                    onnx_name,
+                )
+                onnx_ok = False
+        if not onnx_ok:
+            return False
+
         classifier = VehicleClassifier(
             config=clf_cfg,
             classifier_model=clf_model,
