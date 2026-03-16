@@ -2,7 +2,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-from fastapi import HTTPException
+from pydantic import ValidationError
 
 from edge.api.navigation import StartNavRequest, start_navigation, stop_navigation
 
@@ -12,6 +12,7 @@ class NavigationApiTests(unittest.TestCase):
         self.nav = SimpleNamespace(
             arrival_detector=Mock(),
             scheduler=Mock(),
+            gps_state=Mock(),
             is_navigating=False,
             destination=None,
             current_route={"dummy": True},
@@ -20,12 +21,8 @@ class NavigationApiTests(unittest.TestCase):
 
     def test_start_navigation_rejects_radius_out_of_bounds(self):
         for bad_radius in (0.5, 1320.1):
-            with self.assertRaises(HTTPException) as ctx:
-                start_navigation(
-                    StartNavRequest(dest_lat=1.0, dest_lon=2.0, display_name="x", radius_ft=bad_radius),
-                    self.request,
-                )
-            self.assertIn("radius_ft must be between", str(ctx.exception.detail))
+            with self.assertRaises(ValidationError):
+                StartNavRequest(dest_lat=1.0, dest_lon=2.0, display_name="x", radius_ft=bad_radius)
 
         self.nav.arrival_detector.set_radius.assert_not_called()
         self.nav.scheduler.deactivate.assert_not_called()

@@ -56,6 +56,8 @@ class StartNavRequest(BaseModel):
     display_name: str = ""
     radius_ft: float = Field(
         default=_RADIUS_FT_DEFAULT,
+        ge=_RADIUS_FT_MIN,
+        le=_RADIUS_FT_MAX,
         description="Arrival geofence radius in feet (1-1320 ft, 1/4 mile max)",
     )
 
@@ -155,12 +157,6 @@ def get_route(body: RouteRequest, request: Request):
 @router.post("/start")
 def start_navigation(body: StartNavRequest, request: Request):
     """Activate navigation to a destination and pause scanning while en route."""
-    if not (_RADIUS_FT_MIN <= body.radius_ft <= _RADIUS_FT_MAX):
-        raise HTTPException(
-            status_code=422,
-            detail=f"radius_ft must be between {_RADIUS_FT_MIN} and {_RADIUS_FT_MAX}",
-        )
-
     radius_m = body.radius_ft * _FT_TO_M
     nav = _nav(request)
 
@@ -177,9 +173,7 @@ def start_navigation(body: StartNavRequest, request: Request):
         "radius_m": round(radius_m, 2),
     }
 
-    gps_state = getattr(nav, "gps_state", None)
-    if gps_state is not None and hasattr(gps_state, "set_address"):
-        gps_state.set_address(body.display_name)
+    nav.gps_state.set_address(body.display_name)
 
     logger.info(
         "Navigation started -> (%.6f, %.6f) %s radius=%.0fft (%.1fm)",
@@ -202,9 +196,7 @@ def stop_navigation(request: Request):
     nav.destination = None
     nav.current_route = None
 
-    gps_state = getattr(nav, "gps_state", None)
-    if gps_state is not None and hasattr(gps_state, "clear_address"):
-        gps_state.clear_address()
+    nav.gps_state.clear_address()
 
     logger.info("Navigation stopped -> pipeline ACTIVE")
     return {"status": "stopped"}
@@ -216,9 +208,7 @@ async def update_gps(body: GPSRequest, request: Request):
     nav = _nav(request)
     nav.current_pos = {"lat": body.lat, "lon": body.lon}
 
-    gps_state = getattr(nav, "gps_state", None)
-    if gps_state is not None and hasattr(gps_state, "update"):
-        gps_state.update(body.lat, body.lon)
+    nav.gps_state.update(body.lat, body.lon)
 
     arrived = nav.arrival_detector.update_position(body.lat, body.lon)
     if arrived:
@@ -328,16 +318,12 @@ def get_detection(detection_id: int, request: Request):
 def get_status(request: Request):
     """Return the current navigation status snapshot."""
     nav = _nav(request)
-    scheduler = getattr(nav, "scheduler", None)
-    arrival_detector = getattr(nav, "arrival_detector", None)
-    ws_manager = getattr(nav, "ws_manager", None)
-
     return {
-        "navigating": getattr(nav, "is_navigating", False),
-        "destination": getattr(nav, "destination", None),
-        "current_pos": getattr(nav, "current_pos", None),
-        "current_route": getattr(nav, "current_route", None),
-        "pipeline_active": bool(getattr(scheduler, "is_active", False)),
-        "arrival": arrival_detector.status() if arrival_detector is not None else None,
-        "ws_clients": int(getattr(ws_manager, "client_count", 0)),
+        "navigating": nav.is_navigating,
+        "destination": nav.destination,
+        "current_pos": nav.current_pos,
+        "current_route": nav.current_route,
+        "pipeline_active": nav.scheduler.is_active,
+        "arrival": nav.arrival_detector.status(),
+        "ws_clients": nav.ws_manager.client_count,
     }

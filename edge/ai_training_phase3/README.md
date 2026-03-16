@@ -40,11 +40,21 @@ No custom datasets, no retraining, no fine-tuning.
   - validates YOLO detection datasets laid out as `images/{train,val,test}` + `labels/{train,val,test}`
   - validates OCR recognition datasets laid out as `images/` + `labels.csv`
   - produces JSON-serializable manifests for dataset quality checks before training
+- `plate_training.py`
+  - validates plate-detector datasets
+  - writes the YOLO dataset YAML used for fine-tuning
+  - can install the trained `best.pt` into `models/raw/yolov8n_lp.pt` for the existing TensorRT build flow
+- `ocr_training.py`
+  - validates OCR datasets and writes PaddleOCR `train_list.txt` / `val_list.txt`
+  - generates a restricted US-plate character dictionary (`0-9`, `A-Z`)
+  - can install exported PaddleOCR inference assets into `models/raw/en_PP-OCRv4_rec_infer`
 
 ## Script Entry Points
 
 - `python scripts/validate_training_dataset.py --task yolo_detection --dataset-root <path>`
 - `python scripts/validate_training_dataset.py --task ocr_recognition --dataset-root <path>`
+- `python scripts/train_plate_detector.py --dataset-root <path> --install-runtime-slot --build-runtime-engine`
+- `python scripts/train_ocr_recognizer.py --dataset-root <path> --paddleocr-root <checkout> --install-runtime-slot --build-runtime-engine`
 
 These utilities are intentionally isolated from runtime inference code. They
 exist to support future accuracy work without changing the deployed edge
