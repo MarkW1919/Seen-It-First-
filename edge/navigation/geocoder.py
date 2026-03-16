@@ -163,17 +163,6 @@ class Geocoder:
                 raise GeocoderError(f"Nominatim request failed: {exc}") from exc
             finally:
                 self._last_request_at = time.monotonic()
-        try:
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                body = json.loads(resp.read().decode())
-        except urllib.error.HTTPError as exc:
-            raise GeocoderError(f"Nominatim HTTP {exc.code}: {address}") from exc
-        except Exception as exc:
-            raise GeocoderError(f"Nominatim request failed: {exc}") from exc
-        finally:
-            # Keep rate-limit timing on the monotonic clock to avoid
-            # wall-clock jumps and mixed-clock math bugs.
-            self._last_request_at = time.monotonic()
 
         if not body:
             raise GeocoderError(f"No results for address: '{address}'")

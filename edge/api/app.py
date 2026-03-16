@@ -1,23 +1,5 @@
 """
-FastAPI application factory.
-
-Creates the HTTP + WebSocket server that exposes:
-  - Navigation endpoints (/navigation/*)
-  - WebSocket for real-time events (/ws)
-
-Run alongside the edge pipeline via uvicorn in a daemon thread:
-
-    from edge.api.app import create_app
-    import uvicorn, threading
-
-    app = create_app(scheduler=service.scheduler, config=nav_cfg, api_config=api_cfg)
-    t = threading.Thread(
-        target=uvicorn.run,
-        args=(app,),
-        kwargs={"host": "127.0.0.1", "port": 8080, "log_level": "warning"},
-        daemon=True,
-    )
-    t.start()
+FastAPI application factory for the navigation API and WebSocket endpoint.
 """
 
 import asyncio
@@ -29,7 +11,6 @@ from urllib.parse import parse_qs
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from edge.api.navigation import router as nav_router
@@ -58,8 +39,12 @@ def _resolve_navigation_endpoints(cfg: dict) -> tuple[str, str]:
 
     self_geocoder = str(cfg.get("nominatim_url", "")).strip()
     self_router = str(cfg.get("osrm_url", "")).strip()
-    public_geocoder = str(cfg.get("public_nominatim_url", "https://nominatim.openstreetmap.org/search")).strip()
-    public_router = str(cfg.get("public_osrm_url", "https://router.project-osrm.org")).strip()
+    public_geocoder = str(
+        cfg.get("public_nominatim_url", "https://nominatim.openstreetmap.org/search")
+    ).strip()
+    public_router = str(
+        cfg.get("public_osrm_url", "https://router.project-osrm.org")
+    ).strip()
 
     geocoder_url = ""
     router_url = ""
@@ -69,7 +54,7 @@ def _resolve_navigation_endpoints(cfg: dict) -> tuple[str, str]:
     elif mode == "online":
         geocoder_url = public_geocoder or self_geocoder
         router_url = public_router or self_router
-    else:  # hybrid default
+    else:
         geocoder_url = self_geocoder
         router_url = self_router
         if allow_public and not geocoder_url:
@@ -84,13 +69,16 @@ def _resolve_navigation_endpoints(cfg: dict) -> tuple[str, str]:
             router_url = ""
 
     return geocoder_url, router_url
+
+
 def _extract_bearer_token(auth_header: str | None) -> str | None:
-    """Extract bearer token from Authorization header when present."""
+    """Extract a bearer token from an Authorization header."""
     if not auth_header:
         return None
     prefix = "bearer "
     if auth_header.lower().startswith(prefix):
-        return auth_header[len(prefix):].strip()
+        token = auth_header[len(prefix) :].strip()
+        return token or None
     return None
 
 
@@ -99,19 +87,24 @@ def _extract_auth_credentials(
     auth_header: str | None,
     query_token: str | None,
 ) -> tuple[str | None, str | None, str | None]:
-    """Normalize auth credential tuple for re-use by HTTP and WebSocket paths."""
+    """Normalize auth credentials for shared HTTP and WS checks."""
     return x_api_key, _extract_bearer_token(auth_header), query_token
 
 
-def _is_api_authorized(expected_token: str, header_key: str | None, bearer: str | None, query_key: str | None) -> bool:
-    """Return True when provided credentials match expected token."""
+def _is_api_authorized(
+    expected_token: str,
+    header_key: str | None,
+    bearer: str | None,
+    query_key: str | None,
+) -> bool:
+    """Return True when provided credentials match the expected token."""
     if not expected_token:
         return True
     return expected_token in {header_key, bearer, query_key}
 
 
 def _is_protected_path(path: str) -> bool:
-    """Return True for paths that require API auth when auth is enabled."""
+    """Return True for HTTP routes that require auth when enabled."""
     return path == "/navigation" or path.startswith("/navigation/")
 
 
@@ -128,12 +121,9 @@ def _normalize_allowed_origins(raw_origins: object) -> list[str]:
     return cleaned or ["http://localhost:5173"]
 
 
-# ---------------------------------------------------------------------------
-# WebSocket connection manager
-# ---------------------------------------------------------------------------
 @dataclass(frozen=True)
 class AuthConfig:
-    """Runtime auth settings for HTTP navigation routes and /ws."""
+    """Runtime auth settings for nested api.auth config."""
 
     enabled: bool
     api_key: str | None
@@ -141,77 +131,14 @@ class AuthConfig:
 
 
 def _parse_auth_config(api_cfg: dict) -> AuthConfig:
-    auth_cfg = api_cfg.get("auth", {}) if isinstance(api_cfg.get("auth", {}), dict) else {}
+    auth_cfg = api_cfg.get("auth", {})
+    if not isinstance(auth_cfg, dict):
+        auth_cfg = {}
+
     api_key = str(auth_cfg.get("api_key", "")).strip() or None
     bearer_token = str(auth_cfg.get("bearer_token", "")).strip() or None
     enabled = bool(auth_cfg.get("enabled", bool(api_key or bearer_token)))
     return AuthConfig(enabled=enabled, api_key=api_key, bearer_token=bearer_token)
-
-
-def _extract_bearer_token(value: str | None) -> str | None:
-    if not value:
-        return None
-    parts = value.strip().split(" ", 1)
-    if len(parts) == 2 and parts[0].lower() == "bearer":
-        return parts[1].strip() or None
-    return None
-
-
-def _is_authorized(headers: dict[str, str], auth: AuthConfig, query_string: str = "") -> bool:
-    if not auth.enabled:
-        return True
-
-    api_key = headers.get("x-api-key")
-    bearer_token = _extract_bearer_token(headers.get("authorization"))
-
-    if query_string:
-        q = parse_qs(query_string)
-        api_key = api_key or q.get("api_key", [None])[0]
-        bearer_token = bearer_token or q.get("token", [None])[0]
-
-    if auth.api_key and api_key == auth.api_key:
-        return True
-    if auth.bearer_token and bearer_token == auth.bearer_token:
-        return True
-    return False
-
-
-def _resolve_cors_origins(api_cfg: dict) -> list[str]:
-    origins = api_cfg.get("allowed_origins", [])
-    env = str(api_cfg.get("environment", "production")).lower()
-
-    if not isinstance(origins, list):
-        raise ValueError("api.allowed_origins must be a list of origins")
-
-    cleaned = [str(origin).strip() for origin in origins if str(origin).strip()]
-    if "*" in cleaned:
-        raise ValueError("Wildcard CORS origin '*' is not allowed")
-
-    if env == "production" and not cleaned:
-        raise ValueError(
-            "api.allowed_origins must contain explicit production origins when api.environment=production"
-        )
-
-    return cleaned
-
-
-def _log_unauthorized_http(request: Request):
-    logger.warning(
-        "Unauthorized API request: path=%s method=%s client=%s user_agent=%s",
-        request.url.path,
-        request.method,
-        request.client.host if request.client else "unknown",
-        request.headers.get("user-agent", "-"),
-    )
-
-
-def _log_unauthorized_ws(ws: WebSocket):
-    logger.warning(
-        "Unauthorized WS request: path=%s client=%s user_agent=%s",
-        ws.url.path,
-        ws.client.host if ws.client else "unknown",
-        ws.headers.get("user-agent", "-"),
-    )
 
 
 def _is_cors_preflight(request: Request) -> bool:
@@ -222,6 +149,47 @@ def _is_cors_preflight(request: Request) -> bool:
     )
 
 
+def _is_nested_auth_authorized(
+    headers: Request.headers.__class__ | dict[str, str],
+    auth: AuthConfig,
+    query_string: str = "",
+) -> bool:
+    if not auth.enabled:
+        return True
+
+    api_key = headers.get("x-api-key")
+    bearer_token = _extract_bearer_token(headers.get("authorization"))
+
+    if query_string:
+        query = parse_qs(query_string)
+        api_key = api_key or query.get("api_key", [None])[0]
+        bearer_token = bearer_token or query.get("token", [None])[0]
+
+    if auth.api_key and api_key == auth.api_key:
+        return True
+    if auth.bearer_token and bearer_token == auth.bearer_token:
+        return True
+    return False
+
+
+def _log_unauthorized_http(request: Request) -> None:
+    logger.warning(
+        "Unauthorized API request: path=%s method=%s client=%s user_agent=%s",
+        request.url.path,
+        request.method,
+        request.client.host if request.client else "unknown",
+        request.headers.get("user-agent", "-"),
+    )
+
+
+def _log_unauthorized_ws(ws: WebSocket) -> None:
+    logger.warning(
+        "Unauthorized WS request: path=%s client=%s user_agent=%s",
+        ws.url.path,
+        ws.client.host if ws.client else "unknown",
+        ws.headers.get("user-agent", "-"),
+    )
+
 
 class ConnectionManager:
     """Broadcast JSON events to all connected WebSocket clients."""
@@ -229,36 +197,30 @@ class ConnectionManager:
     def __init__(self):
         self._clients: list[WebSocket] = []
 
-    async def connect(self, ws: WebSocket):
+    async def connect(self, ws: WebSocket) -> None:
         await ws.accept()
         self._clients.append(ws)
         logger.debug("WS client connected (total=%d)", len(self._clients))
 
-    def disconnect(self, ws: WebSocket):
+    def disconnect(self, ws: WebSocket) -> None:
         if ws in self._clients:
             self._clients.remove(ws)
         logger.debug("WS client disconnected (total=%d)", len(self._clients))
 
-    async def broadcast(self, data: dict):
-        """Send data to all connected clients, removing dead connections."""
+    async def broadcast(self, data: dict) -> None:
         dead: list[WebSocket] = []
         for ws in list(self._clients):
             try:
                 await ws.send_json(data)
             except Exception:
                 dead.append(ws)
+
         for ws in dead:
-            if ws in self._clients:
-                self._clients.remove(ws)
+            self.disconnect(ws)
 
     @property
     def client_count(self) -> int:
         return len(self._clients)
-
-
-# ---------------------------------------------------------------------------
-# App factory
-# ---------------------------------------------------------------------------
 
 
 def create_app(
@@ -273,10 +235,17 @@ def create_app(
 ) -> FastAPI:
     """Build and return the FastAPI application."""
     cfg = config or {}
-    geocoder_url, router_url = _resolve_navigation_endpoints(cfg)
     api_cfg = api_config or {}
 
-    allowed_origins = _resolve_cors_origins(api_cfg)
+    geocoder_url, router_url = _resolve_navigation_endpoints(cfg)
+    allowed_origins = _normalize_allowed_origins(
+        api_cfg.get("allowed_origins", ["http://localhost:5173"])
+    )
+    env = str(api_cfg.get("environment", "development")).lower()
+    if env == "production" and not allowed_origins:
+        raise ValueError("api.allowed_origins must contain explicit production origins")
+
+    legacy_token = str(api_cfg.get("auth_token", "") or "").strip()
     auth = _parse_auth_config(api_cfg)
 
     geocoder = Geocoder(
@@ -286,19 +255,23 @@ def create_app(
         timeout_sec=float(cfg.get("timeout_sec", 10)),
         max_retries=int(cfg.get("max_retries", 3)),
         backoff_base_sec=float(cfg.get("backoff_base_sec", 0.75)),
-        user_agent=cfg.get("user_agent", "Seen-It-First-Edge/1.0 (edge-navigation; ops@example.local)"),
+        user_agent=cfg.get(
+            "user_agent",
+            "Seen-It-First-Edge/1.0 (edge-navigation; ops@example.local)",
+        ),
     )
     router_svc = Router(
         osrm_url=router_url,
         timeout_sec=float(cfg.get("timeout_sec", 10)),
         max_retries=int(cfg.get("max_retries", 3)),
         backoff_base_sec=float(cfg.get("backoff_base_sec", 0.75)),
-        user_agent=cfg.get("user_agent", "Seen-It-First-Edge/1.0 (edge-navigation; ops@example.local)"),
+        user_agent=cfg.get(
+            "user_agent",
+            "Seen-It-First-Edge/1.0 (edge-navigation; ops@example.local)",
+        ),
         min_request_interval_sec=float(cfg.get("min_request_interval_sec", 1.1)),
     )
-    arrival = ArrivalDetector(
-        radius_m=cfg.get("arrival_radius_m", 80.0),
-    )
+    arrival = ArrivalDetector(radius_m=float(cfg.get("arrival_radius_m", 80.0)))
 
     if ws_manager is None:
         ws_manager = ConnectionManager()
@@ -314,18 +287,13 @@ def create_app(
         repository=repository,
     )
 
-    api_token = str(api_cfg.get("auth_token", "") or "").strip()
-    allowed_origins = _normalize_allowed_origins(api_cfg.get("allowed_origins", ["http://localhost:5173"]))
-
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         logger.info("Navigation API server starting")
-        if api_token:
+        if legacy_token or auth.enabled:
             logger.info("API auth enabled for /navigation/* and /ws")
-        if "*" in allowed_origins:
-            logger.warning("CORS allow_origins contains '*' — this is not recommended for production")
         if event_publisher is not None:
-            event_publisher.set_event_loop(asyncio.get_event_loop())
+            event_publisher.set_event_loop(asyncio.get_running_loop())
             logger.info("EventPublisher wired to uvicorn event loop")
         yield
         logger.info("Navigation API server stopping")
@@ -346,32 +314,31 @@ def create_app(
 
     @app.middleware("http")
     async def auth_middleware(request: Request, call_next):
-        # Browser CORS preflights are intentionally unauthenticated and must
-        # pass through so CORSMiddleware can return the negotiated headers.
-        # Restrict this bypass to actual preflight requests (OPTIONS with
-        # Access-Control-Request-Method) so protected routes cannot be
-        # accessed by spoofing CORS headers on normal methods.
-        if request.method == "OPTIONS" and request.headers.get("access-control-request-method"):
+        if not _is_protected_path(request.url.path):
             return await call_next(request)
 
-        if api_token and _is_protected_path(request.url.path):
-            header_key, bearer, _ = _extract_auth_credentials(
-                x_api_key=request.headers.get("x-api-key"),
-                auth_header=request.headers.get("authorization"),
-                query_token=None,
-            )
-            if not _is_api_authorized(api_token, header_key, bearer, None):
-                return JSONResponse({"detail": "Unauthorized"}, status_code=401)
-    async def auth_http_requests(request: Request, call_next):
-        if request.url.path.startswith("/navigation") and _is_cors_preflight(request):
+        if _is_cors_preflight(request):
             return await call_next(request)
 
-        if request.url.path.startswith("/navigation") and not _is_authorized(request.headers, auth):
+        header_key, bearer, _ = _extract_auth_credentials(
+            x_api_key=request.headers.get("x-api-key"),
+            auth_header=request.headers.get("authorization"),
+            query_token=None,
+        )
+
+        authorized = True
+        if legacy_token:
+            authorized = _is_api_authorized(legacy_token, header_key, bearer, None)
+        elif auth.enabled:
+            authorized = _is_nested_auth_authorized(request.headers, auth)
+
+        if not authorized:
             _log_unauthorized_http(request)
             return JSONResponse(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 content={"detail": "Unauthorized"},
             )
+
         return await call_next(request)
 
     app.state.nav = nav_state
@@ -385,9 +352,13 @@ def create_app(
             query_token=ws.query_params.get("token"),
         )
 
-        if not _is_api_authorized(api_token, header_key, bearer, query_key):
-            await ws.close(code=1008)
-        if not _is_authorized(dict(ws.headers), auth, ws.url.query):
+        authorized = True
+        if legacy_token:
+            authorized = _is_api_authorized(legacy_token, header_key, bearer, query_key)
+        elif auth.enabled:
+            authorized = _is_nested_auth_authorized(ws.headers, auth, ws.url.query)
+
+        if not authorized:
             _log_unauthorized_ws(ws)
             await ws.close(code=status.WS_1008_POLICY_VIOLATION)
             return
@@ -406,6 +377,7 @@ def create_app(
         except WebSocketDisconnect:
             ws_manager.disconnect(ws)
         except Exception:
+            logger.exception("WebSocket client failed")
             ws_manager.disconnect(ws)
 
     return app
