@@ -86,7 +86,7 @@ class PlateOCR:
         self.min_chars = int(config.get("min_plate_chars", 2))
         self.max_chars = int(config.get("max_plate_chars", 8))
         self.enable_ambiguity_correction = bool(
-            config.get("enable_ambiguity_correction", True)
+            config.get("enable_ambiguity_correction", False)
         )
         self.clahe_clip_limit = float(config.get("clahe_clip_limit", 3.0))
         grid = int(config.get("clahe_grid_size", 8))

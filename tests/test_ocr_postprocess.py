@@ -7,6 +7,18 @@ class TestPlateOCRPostprocess(unittest.TestCase):
     def setUp(self):
         self.ocr = PlateOCR({"model_path": "models/ocr/ocr.engine"})
 
+    def test_ambiguity_correction_defaults_disabled_without_config(self):
+        self.assertFalse(self.ocr.enable_ambiguity_correction)
+
+    def test_ambiguity_correction_can_be_enabled_from_config(self):
+        ocr = PlateOCR(
+            {
+                "model_path": "models/ocr/ocr.engine",
+                "enable_ambiguity_correction": True,
+            }
+        )
+        self.assertTrue(ocr.enable_ambiguity_correction)
+
     def test_postprocess_strips_non_alnum_and_uppercases(self):
         cleaned = self.ocr._postprocess_text(" ab-12 c* ")
         self.assertEqual(cleaned, "AB12C")

@@ -7,6 +7,8 @@ from edge.api.app import (
     _is_api_authorized,
     _is_protected_path,
     _normalize_allowed_origins,
+    _resolve_cors_origins,
+    ConnectionManager,
     create_app,
 )
 
@@ -14,6 +16,7 @@ _HTTPX_AVAILABLE = importlib.util.find_spec("httpx") is not None
 
 if _HTTPX_AVAILABLE:
     from fastapi.testclient import TestClient
+    from starlette.websockets import WebSocketDisconnect
 
 
 class _DummyScheduler:
@@ -65,6 +68,20 @@ class TestApiAuthHelpers(unittest.TestCase):
             _normalize_allowed_origins(["http://a.com", "  ", "http://b.com"]),
             ["http://a.com", "http://b.com"],
         )
+
+    def test_resolve_cors_origins_defaults_for_development(self):
+        self.assertEqual(
+            _resolve_cors_origins({"environment": "development"}),
+            ["http://localhost:5173"],
+        )
+
+    def test_resolve_cors_origins_requires_explicit_production_origins(self):
+        with self.assertRaises(ValueError):
+            _resolve_cors_origins({"environment": "production"})
+
+    def test_resolve_cors_origins_rejects_wildcard(self):
+        with self.assertRaises(ValueError):
+            _resolve_cors_origins({"allowed_origins": ["*"]})
 
 
 @unittest.skipUnless(_HTTPX_AVAILABLE, "httpx not installed; skipping FastAPI TestClient integration checks")
@@ -121,6 +138,26 @@ class TestApiAuthMiddleware(unittest.TestCase):
         with self._client("") as client:
             response = client.get("/navigation/status")
             self.assertEqual(response.status_code, 200)
+
+    def test_websocket_requires_token_and_does_not_register_client(self):
+        ws_manager = ConnectionManager()
+        app = create_app(
+            scheduler=_DummyScheduler(),
+            config={},
+            api_config={
+                "auth_token": "secret-token",
+                "allowed_origins": ["http://localhost:5173"],
+            },
+            ws_manager=ws_manager,
+        )
+
+        with TestClient(app) as client:
+            with self.assertRaises(WebSocketDisconnect) as ctx:
+                with client.websocket_connect("/ws"):
+                    pass
+
+        self.assertEqual(ctx.exception.code, 1008)
+        self.assertEqual(ws_manager.client_count, 0)
 
 
 if __name__ == "__main__":

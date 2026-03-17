@@ -297,7 +297,7 @@ class EdgeService:
         self._warn_on_navigation_endpoint_risk()
         self._start_api_server()
 
-        logger.info("CameraManager started")
+        logger.info("CameraManager initialized")
 
         logger.info("Initialization complete")
         return True

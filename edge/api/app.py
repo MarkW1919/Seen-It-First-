@@ -118,7 +118,22 @@ def _normalize_allowed_origins(raw_origins: object) -> list[str]:
         candidates = []
 
     cleaned = [origin for origin in candidates if origin]
-    return cleaned or ["http://localhost:5173"]
+    return cleaned
+
+
+def _resolve_cors_origins(api_cfg: dict) -> list[str]:
+    """Validate and resolve CORS origins from API config."""
+    raw_origins = api_cfg.get("allowed_origins")
+    allowed_origins = _normalize_allowed_origins(raw_origins) if raw_origins is not None else []
+
+    if "*" in allowed_origins:
+        raise ValueError("api.allowed_origins must not contain '*'")
+
+    env = str(api_cfg.get("environment", "development")).lower()
+    if env == "production" and not allowed_origins:
+        raise ValueError("api.allowed_origins must contain explicit production origins")
+
+    return allowed_origins or ["http://localhost:5173"]
 
 
 @dataclass(frozen=True)
@@ -238,12 +253,7 @@ def create_app(
     api_cfg = api_config or {}
 
     geocoder_url, router_url = _resolve_navigation_endpoints(cfg)
-    allowed_origins = _normalize_allowed_origins(
-        api_cfg.get("allowed_origins", ["http://localhost:5173"])
-    )
-    env = str(api_cfg.get("environment", "development")).lower()
-    if env == "production" and not allowed_origins:
-        raise ValueError("api.allowed_origins must contain explicit production origins")
+    allowed_origins = _resolve_cors_origins(api_cfg)
 
     legacy_token = str(api_cfg.get("auth_token", "") or "").strip()
     auth = _parse_auth_config(api_cfg)

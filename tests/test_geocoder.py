@@ -64,6 +64,23 @@ class TestGeocoder(unittest.TestCase):
             self.assertLessEqual(sleeps[0], 1.1)
             self.assertGreaterEqual(sleeps[0], 0.0)
 
+    def test_successful_nominatim_request_only_calls_urlopen_once(self):
+        with tempfile.TemporaryDirectory() as td:
+            g = Geocoder(cache_path=Path(td) / "geocode_cache.json")
+
+            response = MagicMock()
+            response.read.return_value = b'[{"lat":"1.0","lon":"2.0","display_name":"A"}]'
+            cm = MagicMock()
+            cm.__enter__.return_value = response
+            cm.__exit__.return_value = False
+
+            with patch("edge.navigation.geocoder.urllib.request.urlopen", return_value=cm) as urlopen:
+                result = g._nominatim_request("Address A")
+
+            self.assertEqual(urlopen.call_count, 1)
+            self.assertIsInstance(result, GeocoderResult)
+            self.assertEqual(result.display_name, "A")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -80,8 +80,11 @@ class CameraManager:
                 if isinstance(cam, dict)
             )
         else:
-            logger.error("'cameras' must be a mapping or list in %s", self.config_path)
-            logger.error("Invalid cameras section type: %s", type(cameras_section).__name__)
+            logger.error(
+                "'cameras' must be a mapping or list in %s (got %s)",
+                self.config_path,
+                type(cameras_section).__name__,
+            )
             return
 
         for cam_id, cam_def in items:
