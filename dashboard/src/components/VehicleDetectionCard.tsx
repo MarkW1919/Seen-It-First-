@@ -18,98 +18,104 @@ function capitalize(s: string): string {
 }
 
 export function VehicleDetectionCard({ vehicle, isTopTarget = false }: Props) {
-  const borderColor = isTopTarget ? "#ef4444" : "#334155";
-  const shadowStyle = isTopTarget ? "0 0 12px rgba(239,68,68,0.3)" : "none";
+  const borderStyle = isTopTarget
+    ? "1px solid #ef4444"
+    : "1px solid #1e293b";
+  const shadow = isTopTarget
+    ? "0 0 14px rgba(239,68,68,0.3)"
+    : "none";
 
   return (
     <div
       style={{
         background: "#111827",
-        border: `1px solid ${borderColor}`,
-        borderRadius: "12px",
-        padding: "0.875rem",
-        color: "#e2e8f0",
-        boxShadow: shadowStyle,
+        border: borderStyle,
+        borderRadius: "10px",
+        padding: "0.75rem",
+        color: "#e8edf5",
+        boxShadow: shadow,
+        animation: isTopTarget ? "border-pulse 2s ease-in-out infinite" : undefined,
       }}
     >
       {/* Header */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
-        <span style={{ fontSize: "0.7rem", fontWeight: 600, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+        <span style={{
+          fontSize: "0.65rem",
+          fontWeight: 700,
+          color: "#64748b",
+          textTransform: "uppercase",
+          letterSpacing: "0.1em",
+        }}>
           Vehicle Detected
         </span>
-        {vehicle.hotlist_match && (
-          <span style={badgeStyle("#dc2626")}>HOTLIST</span>
-        )}
-        {isTopTarget && !vehicle.hotlist_match && (
-          <span style={badgeStyle("#ea580c")}>TOP TARGET</span>
-        )}
+        {vehicle.hotlist_match && <BadgeTag bg="#dc2626">HOTLIST</BadgeTag>}
+        {isTopTarget && !vehicle.hotlist_match && <BadgeTag bg="#ea580c">TOP TARGET</BadgeTag>}
       </div>
 
-      {/* Classification */}
-      <Row label="Type"  value={capitalize(vehicle.vehicle_type)} />
-      <Row label="Make"  value={capitalize(vehicle.make)} />
+      {/* Classification rows */}
+      <Row label="Type" value={capitalize(vehicle.vehicle_type)} />
+      <Row label="Make" value={capitalize(vehicle.make)} />
       <Row label="Model" value={capitalize(vehicle.model)} />
       <Row label="Color" value={capitalize(vehicle.color)} />
-      <Row label="Year"  value={vehicle.year_range === "unknown" ? "Unknown" : vehicle.year_range} />
+      <Row label="Year" value={vehicle.year_range === "unknown" ? "Unknown" : vehicle.year_range} />
 
       {/* Plate */}
       <Row
         label="Plate"
         value={vehicle.plate ?? "Not Detected"}
         valueColor={vehicle.plate ? "#fff" : "#64748b"}
-        valueExtra={vehicle.plate ? { fontFamily: "monospace", fontWeight: 700 } : { fontStyle: "italic" as const }}
+        valueExtra={vehicle.plate
+          ? { fontFamily: "'SF Mono', 'Fira Code', monospace", fontWeight: 800, letterSpacing: "0.05em" }
+          : { fontStyle: "italic" as const }
+        }
       />
 
-      {/* Fingerprint (last 12 chars) */}
+      {/* Fingerprint */}
       {vehicle.fingerprint && (
         <Row
           label="ID"
           value={vehicle.fingerprint.length > 28 ? vehicle.fingerprint.slice(-12) : vehicle.fingerprint}
           valueColor="#64748b"
-          valueExtra={{ fontFamily: "monospace", fontSize: "0.7rem" }}
+          valueExtra={{ fontFamily: "monospace", fontSize: "0.68rem" }}
         />
       )}
 
       {/* Divider */}
-      <div style={{ borderTop: "1px solid #1f2937", margin: "0.4rem 0" }} />
+      <div style={{ borderTop: "1px solid #1e293b", margin: "6px 0" }} />
 
       {/* Scores */}
       <Row label="Confidence" value={vehicle.confidence.toFixed(2)} valueColor={confidenceColor(vehicle.confidence)} />
-      <Row label="Distance"   value={`${Math.round(vehicle.distance_ft)} ft`} />
-      <Row label="Score"       value={vehicle.score.toFixed(1)} valueColor="#60a5fa" valueExtra={{ fontWeight: 700 }} />
+      <Row label="Distance" value={`${Math.round(vehicle.distance_ft)} ft`} />
+      <Row label="Score" value={vehicle.score.toFixed(1)} valueColor="#60a5fa" valueExtra={{ fontWeight: 700 }} />
     </div>
   );
 }
 
-/* ── Helpers ─────────────────────────────────────────────────────────────── */
-
 function Row({
-  label,
-  value,
-  valueColor = "#e2e8f0",
-  valueExtra = {},
+  label, value, valueColor = "#e8edf5", valueExtra = {},
 }: {
-  label: string;
-  value: string;
-  valueColor?: string;
-  valueExtra?: React.CSSProperties;
+  label: string; value: string; valueColor?: string; valueExtra?: React.CSSProperties;
 }) {
   return (
-    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.8rem", lineHeight: "1.6" }}>
+    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.78rem", lineHeight: "1.6" }}>
       <span style={{ color: "#94a3b8" }}>{label}:</span>
       <span style={{ color: valueColor, ...valueExtra }}>{value}</span>
     </div>
   );
 }
 
-function badgeStyle(bg: string): React.CSSProperties {
-  return {
-    fontSize: "0.65rem",
-    background: bg,
-    color: "#fff",
-    padding: "0.15rem 0.5rem",
-    borderRadius: "999px",
-    fontWeight: 700,
-    letterSpacing: "0.04em",
-  };
+function BadgeTag({ bg, children }: { bg: string; children: React.ReactNode }) {
+  return (
+    <span style={{
+      fontSize: "0.6rem",
+      background: bg,
+      color: "#fff",
+      padding: "2px 8px",
+      borderRadius: "999px",
+      fontWeight: 800,
+      letterSpacing: "0.05em",
+    }}>
+      {children}
+    </span>
+  );
 }

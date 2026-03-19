@@ -12,33 +12,24 @@ interface TargetsResponse {
 }
 
 interface Props {
-  /** When true (ARRIVED event received) the panel is visible and polling starts. */
   scanning: boolean;
-  /** Optional static targets used for UI previews/demo mode. */
   previewTargets?: RankedVehicle[];
 }
 
 export function TargetList({ scanning, previewTargets }: Props) {
   const [vehicles, setVehicles] = useState<RankedVehicle[]>([]);
-  const [error, setError]       = useState<string | null>(null);
-  const [loading, setLoading]   = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
   const fetchTargets = useCallback(async (signal?: AbortSignal) => {
-    try {
-      const res = await fetch(TARGETS_ENDPOINT, { signal });
     setLoading(true);
     try {
-      const res = await fetch("/navigation/targets", { signal });
+      const res = await fetch(TARGETS_ENDPOINT, { signal });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: TargetsResponse = await res.json();
       if (data.error) throw new Error(data.error);
       setVehicles(data.targets.slice(0, MAX_TARGETS));
       setError(null);
-      const res = await fetch("/navigation/targets");
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data: TargetsResponse = await res.json();
-      setVehicles((data.targets ?? []).slice(0, MAX_TARGETS));
-      setError(data.error ?? null);
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
       setError(err instanceof Error ? err.message : "Fetch failed");
@@ -47,7 +38,6 @@ export function TargetList({ scanning, previewTargets }: Props) {
     }
   }, []);
 
-  // Poll every 3 seconds while scanning
   useEffect(() => {
     if (!scanning) {
       setVehicles([]);
@@ -56,15 +46,7 @@ export function TargetList({ scanning, previewTargets }: Props) {
       return;
     }
 
-    const controller = new AbortController();
-    fetchTargets(controller.signal);
-
-    const interval = setInterval(() => fetchTargets(controller.signal), REFRESH_INTERVAL_MS);
-    return () => {
-      controller.abort();
-      clearInterval(interval);
-    };
-  }, [scanning, fetchTargets]);
+    // Use preview targets if provided
     if (previewTargets && previewTargets.length > 0) {
       setVehicles(previewTargets.slice(0, MAX_TARGETS));
       setLoading(false);
@@ -72,40 +54,34 @@ export function TargetList({ scanning, previewTargets }: Props) {
       return;
     }
 
-    setLoading(true);
-    const abortController = new AbortController();
-    fetchTargets(abortController.signal);
-
-    const interval = setInterval(() => {
-      fetchTargets();
-    }, REFRESH_INTERVAL_MS);
+    // Live polling
+    const controller = new AbortController();
+    fetchTargets(controller.signal);
+    const interval = setInterval(() => fetchTargets(controller.signal), REFRESH_INTERVAL_MS);
 
     return () => {
-      abortController.abort();
+      controller.abort();
       clearInterval(interval);
     };
-  }, [scanning, fetchTargets]);
-    const interval = setInterval(fetchTargets, REFRESH_INTERVAL_MS);
-    return () => clearInterval(interval);
   }, [scanning, fetchTargets, previewTargets]);
 
   if (!scanning) return null;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
       {/* Scanning header */}
       <div style={{
         textAlign: "center",
-        padding: "0.75rem",
-        background: "rgba(30, 58, 138, 0.4)",
+        padding: "10px",
+        background: "rgba(30, 58, 138, 0.35)",
         border: "1px solid #1d4ed8",
-        borderRadius: "12px",
+        borderRadius: "10px",
       }}>
         <p style={{
           color: "#93c5fd",
-          fontWeight: 600,
-          fontSize: "0.8rem",
-          letterSpacing: "0.08em",
+          fontWeight: 700,
+          fontSize: "0.78rem",
+          letterSpacing: "0.1em",
           textTransform: "uppercase",
           margin: 0,
         }}>
@@ -113,46 +89,37 @@ export function TargetList({ scanning, previewTargets }: Props) {
         </p>
       </div>
 
-      {/* Section title */}
-      <h2 style={{ color: "#fff", fontWeight: 700, fontSize: "1rem", margin: 0 }}>
+      <h3 style={{ color: "#e8edf5", fontWeight: 700, fontSize: "0.9rem", margin: 0 }}>
         Potential Target Vehicles
-      </h2>
+      </h3>
 
-      {/* Loading state */}
       {loading && vehicles.length === 0 && (
-        <p style={{ color: "#94a3b8", fontSize: "0.8rem", textAlign: "center", padding: "1rem 0", margin: 0 }}>
+        <p style={{ color: "#94a3b8", fontSize: "0.8rem", textAlign: "center", padding: "0.75rem 0", margin: 0 }}>
           Searching for vehicles…
         </p>
       )}
 
-      {/* Error */}
       {error && (
         <p style={{ color: "#f87171", fontSize: "0.8rem", textAlign: "center", padding: "0.5rem 0", margin: 0 }}>
           Error: {error}
         </p>
       )}
 
-      {/* No results */}
       {!loading && !error && vehicles.length === 0 && (
-        <p style={{ color: "#64748b", fontSize: "0.8rem", textAlign: "center", padding: "1rem 0", margin: 0 }}>
+        <p style={{ color: "#64748b", fontSize: "0.8rem", textAlign: "center", padding: "0.75rem 0", margin: 0 }}>
           No vehicles detected within range.
         </p>
       )}
 
-      {/* Vehicle cards — top vehicle highlighted in red */}
-      <div style={{ display: "flex", flexDirection: "column", gap: "0.625rem" }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
         {vehicles.map((v, idx) => (
-          <VehicleDetectionCard
-            key={v.vehicle_id}
-            vehicle={v}
-            isTopTarget={idx === 0}
-          />
+          <VehicleDetectionCard key={v.vehicle_id} vehicle={v} isTopTarget={idx === 0} />
         ))}
       </div>
 
       {vehicles.length > 0 && (
-        <p style={{ color: "#475569", fontSize: "0.7rem", textAlign: "center", margin: 0 }}>
-          Showing {vehicles.length} vehicle{vehicles.length !== 1 ? "s" : ""} · refreshes every 3 s
+        <p style={{ color: "#475569", fontSize: "0.68rem", textAlign: "center", margin: 0 }}>
+          Showing {vehicles.length} vehicle{vehicles.length !== 1 ? "s" : ""} · refreshes every 3s
         </p>
       )}
     </div>

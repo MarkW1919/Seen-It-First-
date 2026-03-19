@@ -29,6 +29,8 @@ Use URL query `screen`:
 
 - In Navigation, geocoding an address now auto-searches stored detections near that address and shows either a subtle "no detections" notice or a selection modal with detection details/images.
 
+- User-provided visual mockups are stored in `docs/reference-screens/ops-preview-mockups/`.
+
 ## Source of truth
 - `dashboard/src/App.tsx`
 - `dashboard/src/pages/NavigationPage.tsx`

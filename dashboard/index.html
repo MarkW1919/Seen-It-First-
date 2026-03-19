@@ -2,8 +2,8 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Seen-It-First Dashboard</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <title>Seen-It-First | Recovery Operations</title>
     <link
       rel="stylesheet"
       href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
@@ -12,8 +12,99 @@
     />
     <style>
       *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-      html, body, #root { height: 100%; width: 100%; }
-      body { font-family: system-ui, -apple-system, sans-serif; background: #0f172a; color: #e2e8f0; }
+      html, body, #root { height: 100%; width: 100%; overflow: hidden; }
+      body {
+        font-family: Inter, system-ui, -apple-system, sans-serif;
+        background: #080c14;
+        color: #e8edf5;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+        -webkit-tap-highlight-color: transparent;
+        touch-action: manipulation;
+      }
+
+      /* Tactical scrollbar */
+      ::-webkit-scrollbar { width: 6px; }
+      ::-webkit-scrollbar-track { background: #0c1220; }
+      ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+      ::-webkit-scrollbar-thumb:hover { background: #475569; }
+
+      /* Animations */
+      @keyframes pulse-glow {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.7; }
+      }
+      @keyframes scan-sweep {
+        0% { background-position: -200% 0; }
+        100% { background-position: 200% 0; }
+      }
+      @keyframes slide-in {
+        from { transform: translateY(-8px); opacity: 0; }
+        to { transform: translateY(0); opacity: 1; }
+      }
+      @keyframes border-pulse {
+        0%, 100% { border-color: #ef4444; box-shadow: 0 0 12px rgba(239,68,68,0.3); }
+        50% { border-color: #f87171; box-shadow: 0 0 20px rgba(239,68,68,0.5); }
+      }
+
+      /* Touch-friendly inputs */
+      input[type="range"] {
+        height: 6px;
+        -webkit-appearance: none;
+        appearance: none;
+        background: #1e293b;
+        border-radius: 3px;
+        outline: none;
+      }
+      input[type="range"]::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        background: #3b82f6;
+        border: 2px solid #60a5fa;
+        cursor: pointer;
+      }
+
+      /* Table styling */
+      table { border-spacing: 0; }
+      th, td {
+        padding: 0.6rem 0.75rem;
+        text-align: left;
+        font-size: 0.82rem;
+        border-bottom: 1px solid #1e293b;
+      }
+      th {
+        color: #64748b;
+        font-weight: 600;
+        text-transform: uppercase;
+        font-size: 0.7rem;
+        letter-spacing: 0.08em;
+        background: #0c1220;
+        position: sticky;
+        top: 0;
+      }
+      td { color: #cbd5e1; }
+      tr:hover td { background: rgba(37,99,235,0.08); }
+
+      /* Button base */
+      button {
+        font-family: inherit;
+        cursor: pointer;
+        border: none;
+        outline: none;
+        -webkit-tap-highlight-color: transparent;
+      }
+      button:active { transform: scale(0.97); }
+
+      /* Leaflet overrides for dark theme */
+      .leaflet-container { background: #0c1220 !important; }
+      .leaflet-control-zoom a {
+        background: #111827 !important;
+        color: #e8edf5 !important;
+        border-color: #334155 !important;
+      }
     </style>
   </head>
   <body>
