@@ -1,90 +1,207 @@
-import { useState, useMemo, type CSSProperties } from "react";
-import { PREVIEW_ALERTS } from "../mock/previewAlerts";
-import PTZModal from "../components/PTZModal";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useWebSocket } from "../hooks/useWebSocket";
+import type {
+  AlertEvent,
+  DetectionEvent,
+  RecentEventsResponse,
+  RuntimeStatusResponse,
+  WsEvent,
+} from "../types/navigation";
 
-// ---------------------------------------------------------------------------
-// Camera data
-// ---------------------------------------------------------------------------
-const CAMERAS = [
-  { id: "cam-front-1", name: "Main Entry", status: "Online", fps: 30, temp: "61°C" },
-  { id: "cam-side-2", name: "Gate North", status: "Online", fps: 28, temp: "59°C" },
-  { id: "cam-rear-3", name: "Lot East", status: "Online", fps: 27, temp: "60°C" },
-  { id: "cam-west-4", name: "Street Cam 2", status: "Offline", fps: 0, temp: "--" },
-];
+type OpsEvent = {
+  id: string;
+  type: "ALERT" | "DETECTION";
+  plate: string;
+  vehicle: string;
+  camera: string;
+  confidenceText: string;
+  timestamp: number;
+  detailLines: Array<{ label: string; value: string }>;
+};
 
-// ---------------------------------------------------------------------------
-// Camera Views Tab
-// ---------------------------------------------------------------------------
+function isOpsEvent(event: WsEvent): event is AlertEvent | DetectionEvent {
+  return event.event === "ALERT" || event.event === "DETECTION";
+}
+
+function formatClock(timestamp: number): string {
+  return new Date(timestamp * 1000).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function normalizeEvent(event: AlertEvent | DetectionEvent): OpsEvent {
+  if (event.event === "ALERT") {
+    return {
+      id: `alert:${event.track_id}:${event.camera_id}:${event.timestamp}:${event.plate}`,
+      type: "ALERT",
+      plate: event.plate,
+      vehicle: event.vehicle_class ?? "Unknown vehicle",
+      camera: event.camera_id,
+      confidenceText: `${(event.confidence * 100).toFixed(0)}%`,
+      timestamp: event.timestamp,
+      detailLines: [
+        { label: "Priority", value: event.priority.toUpperCase() },
+        { label: "Reason", value: event.reason },
+        { label: "Track", value: String(event.track_id) },
+        { label: "Camera", value: event.camera_id },
+      ],
+    };
+  }
+
+  const vehicleBits = [event.color, event.make, event.model].filter(Boolean).join(" ") || (event.vehicle_class ?? "Unknown vehicle");
+  return {
+    id: `detection:${event.track_id}:${event.camera_id}:${event.timestamp}`,
+    type: "DETECTION",
+    plate: event.plate_text ?? "No plate",
+    vehicle: vehicleBits,
+    camera: event.camera_id,
+    confidenceText: `${Math.round((event.plate_conf ?? event.vehicle_conf ?? 0) * 100)}%`,
+    timestamp: event.timestamp,
+    detailLines: [
+      { label: "Track", value: String(event.track_id) },
+      { label: "Vehicle class", value: event.vehicle_class ?? "Unknown" },
+      { label: "Year range", value: event.year_range ?? "Unknown" },
+      { label: "Fingerprint", value: event.fingerprint ?? "Unavailable" },
+      { label: "Composite path", value: event.composite_path ?? "Unavailable" },
+      { label: "Plate crop", value: event.plate_path ?? "Unavailable" },
+    ],
+  };
+}
+
 export default function CameraViews() {
-  const [selectedAlertId, setSelectedAlertId] = useState<string>(PREVIEW_ALERTS[0]?.id ?? "");
-  const [ptzOpen, setPtzOpen] = useState(false);
+  const [events, setEvents] = useState<OpsEvent[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  const selectedAlert = useMemo(
-    () => PREVIEW_ALERTS.find((a) => a.id === selectedAlertId) ?? PREVIEW_ALERTS[0] ?? null,
-    [selectedAlertId],
+  const runtimeQuery = useQuery<RuntimeStatusResponse>({
+    queryKey: ["runtime-status"],
+    queryFn: async () => {
+      const res = await fetch("/navigation/runtime");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json() as Promise<RuntimeStatusResponse>;
+    },
+    refetchInterval: 5_000,
+  });
+
+  const eventsQuery = useQuery<RecentEventsResponse>({
+    queryKey: ["recent-ops-events"],
+    queryFn: async () => {
+      const res = await fetch("/navigation/events/recent?limit=25");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json() as Promise<RecentEventsResponse>;
+    },
+    refetchInterval: 15_000,
+  });
+
+  useEffect(() => {
+    const incoming = (eventsQuery.data?.events ?? []).map(normalizeEvent);
+    if (incoming.length === 0) return;
+    setEvents((prev) => {
+      const merged = [...incoming, ...prev];
+      const seen = new Set<string>();
+      return merged.filter((item) => {
+        if (seen.has(item.id)) return false;
+        seen.add(item.id);
+        return true;
+      }).slice(0, 25);
+    });
+  }, [eventsQuery.data]);
+
+  useWebSocket(
+    useCallback((event: WsEvent) => {
+      if (!isOpsEvent(event)) return;
+      const normalized = normalizeEvent(event);
+      setEvents((prev) => {
+        const merged = [normalized, ...prev];
+        const seen = new Set<string>();
+        return merged.filter((item) => {
+          if (seen.has(item.id)) return false;
+          seen.add(item.id);
+          return true;
+        }).slice(0, 25);
+      });
+      setSelectedId((prev) => prev ?? normalized.id);
+    }, []),
   );
+
+  useEffect(() => {
+    if (events.length > 0 && !selectedId) {
+      setSelectedId(events[0].id);
+    }
+  }, [events, selectedId]);
+
+  const selectedEvent = useMemo(
+    () => events.find((event) => event.id === selectedId) ?? null,
+    [events, selectedId],
+  );
+
+  const cameras = runtimeQuery.data?.cameras ?? [];
 
   return (
     <div style={S.page}>
-      {/* Camera Grid */}
       <section style={S.section}>
-        <h2 style={S.sectionTitle}>Camera Views</h2>
+        <div style={S.sectionHeader}>
+          <h2 style={S.sectionTitle}>Camera Runtime</h2>
+          <span style={S.statusLine}>
+            Pipeline: {runtimeQuery.data?.pipeline_active ? "ACTIVE" : "IDLE"} | WS clients: {runtimeQuery.data?.ws_clients ?? 0}
+          </span>
+        </div>
+
+        {runtimeQuery.isLoading && cameras.length === 0 && <p style={S.infoText}>Loading camera runtime...</p>}
+        {runtimeQuery.error instanceof Error && <p style={S.errorText}>Unable to load camera runtime: {runtimeQuery.error.message}</p>}
+
         <div style={S.camGrid}>
-          {CAMERAS.map((cam) => (
-            <div key={cam.id} style={S.camCard}>
-              <div style={S.camFeed}>Live Feed: {cam.name}</div>
-              <div style={S.camMeta}>
-                <span style={S.camId}>{cam.id}</span>
-                <StatusBadge online={cam.status === "Online"} />
-                <span>{cam.fps} FPS</span>
-                <span>{cam.temp}</span>
+          {cameras.map((camera) => (
+            <div key={camera.camera_id} style={S.camCard}>
+              <div style={S.camHeader}>
+                <strong style={S.camName}>{camera.name}</strong>
+                <StatusBadge online={camera.status === "Online"} />
+              </div>
+              <div style={S.camMetrics}>
+                <Metric label="Camera ID" value={camera.camera_id} />
+                <Metric label="FPS" value={camera.fps.toFixed(1)} />
+                <Metric label="Queue" value={String(camera.queue_depth)} />
+                <Metric label="Last frame" value={camera.last_frame_age_s === null ? "n/a" : `${camera.last_frame_age_s.toFixed(1)}s`} />
               </div>
             </div>
           ))}
         </div>
       </section>
 
-      {/* Recent Alerts Table */}
       <section style={S.section}>
-        <h3 style={S.subTitle}>Recent Alerts</h3>
+        <h3 style={S.subTitle}>Recent Operations Events</h3>
+        {eventsQuery.isLoading && events.length === 0 && <p style={S.infoText}>Loading recent event history...</p>}
+        {!eventsQuery.isLoading && events.length === 0 && <p style={S.infoText}>No recent detection or alert events are available yet.</p>}
         <div style={S.tableWrap}>
           <table style={S.table}>
             <thead>
               <tr>
                 <th>Time</th>
+                <th>Type</th>
                 <th>Plate</th>
                 <th>Vehicle</th>
                 <th>Camera</th>
                 <th>Confidence</th>
-                <th>GPS</th>
-                <th>Action</th>
               </tr>
             </thead>
             <tbody>
-              {PREVIEW_ALERTS.map((a) => (
+              {events.map((event) => (
                 <tr
-                  key={a.id}
+                  key={event.id}
                   style={{
                     cursor: "pointer",
-                    background: a.id === selectedAlertId ? "rgba(37,99,235,0.15)" : undefined,
+                    background: event.id === selectedId ? "rgba(37,99,235,0.15)" : undefined,
                   }}
-                  onClick={() => setSelectedAlertId(a.id)}
+                  onClick={() => setSelectedId(event.id)}
                 >
-                  <td>{a.ts}</td>
-                  <td style={{ fontFamily: "monospace", fontWeight: 700, color: "#e8edf5" }}>{a.plate}</td>
-                  <td>{a.vehicle}</td>
-                  <td>{a.camera}</td>
-                  <td>{(a.confidence * 100).toFixed(0)}%</td>
-                  <td>
-                    <span style={S.coordText}>
-                      {a.latitude.toFixed(5)},&nbsp;{a.longitude.toFixed(5)}
-                    </span>
-                  </td>
-                  <td>
-                    <button style={S.viewBtn} onClick={(e) => { e.stopPropagation(); setSelectedAlertId(a.id); }}>
-                      View Directions
-                    </button>
-                  </td>
+                  <td>{formatClock(event.timestamp)}</td>
+                  <td>{event.type}</td>
+                  <td style={S.plateCell}>{event.plate}</td>
+                  <td>{event.vehicle}</td>
+                  <td>{event.camera}</td>
+                  <td>{event.confidenceText}</td>
                 </tr>
               ))}
             </tbody>
@@ -92,50 +209,22 @@ export default function CameraViews() {
         </div>
       </section>
 
-      {/* Selected Alert Details */}
-      {selectedAlert && (
-        <section style={S.detailPanel}>
-          <h3 style={S.subTitle}>Selected Alert Details</h3>
-          <div style={S.detailLayout}>
-            <img src={selectedAlert.photoUrl} alt={`Scan ${selectedAlert.plate}`} style={S.scanPhoto} />
-            <div style={S.detailGrid}>
-              <DetailItem label="PLATE" value={selectedAlert.plate} />
-              <DetailItem label="VEHICLE" value={selectedAlert.vehicle} />
-              <DetailItem label="MAKE / MODEL" value={`${selectedAlert.make} ${selectedAlert.model}`} />
-              <DetailItem label="COLOR / YEAR" value={`${selectedAlert.color} / ${selectedAlert.yearRange}`} />
-              <DetailItem label="CAMERA" value={selectedAlert.camera} />
-              <DetailItem label="TIME" value={selectedAlert.ts} />
-              <DetailItem label="COORDINATES" value={`${selectedAlert.latitude.toFixed(5)}, ${selectedAlert.longitude.toFixed(5)}`} />
-              <DetailItem label="CONFIDENCE" value={`${(selectedAlert.confidence * 100).toFixed(0)}%`} />
-            </div>
+      <section style={S.detailPanel}>
+        <h3 style={S.subTitle}>Selected Event Detail</h3>
+        {selectedEvent ? (
+          <div style={S.detailGrid}>
+            {selectedEvent.detailLines.map((line) => (
+              <DetailItem key={`${selectedEvent.id}:${line.label}`} label={line.label} value={line.value} />
+            ))}
           </div>
-
-          {/* Quick Actions */}
-          <div style={S.quickActions}>
-            <button style={S.quickBtnPrimary}>License Plate Search</button>
-            <button style={S.quickBtn}>Dispatch Recovery Agent</button>
-            <button style={S.quickBtn}>Mark Visual Confirmed</button>
-            <button style={S.quickBtn}>Open Camera Playback</button>
-            <button style={S.quickBtn}>Send Team Notification</button>
-            <button style={S.quickBtn} onClick={() => setPtzOpen(true)}>Manual PTZ Control</button>
-          </div>
-        </section>
-      )}
-
-      {/* PTZ Modal */}
-      {ptzOpen && (
-        <PTZModal
-          camera={selectedAlert?.camera ?? "Main Entry"}
-          onClose={() => setPtzOpen(false)}
-        />
-      )}
+        ) : (
+          <p style={S.infoText}>Select an event to inspect recent runtime detail.</p>
+        )}
+      </section>
     </div>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Sub-components
-// ---------------------------------------------------------------------------
 function StatusBadge({ online }: { online: boolean }) {
   return (
     <span style={{
@@ -151,18 +240,24 @@ function StatusBadge({ online }: { online: boolean }) {
   );
 }
 
-function DetailItem({ label, value }: { label: string; value: string }) {
+function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <div style={S.detailItem}>
-      <span style={S.detailLabel}>{label}</span>
-      <strong style={{ color: "#e8edf5" }}>{value}</strong>
+    <div style={S.metric}>
+      <span style={S.metricLabel}>{label}</span>
+      <strong style={S.metricValue}>{value}</strong>
     </div>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Styles
-// ---------------------------------------------------------------------------
+function DetailItem({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={S.detailItem}>
+      <span style={S.detailLabel}>{label}</span>
+      <strong style={{ color: "#e8edf5", wordBreak: "break-word" }}>{value}</strong>
+    </div>
+  );
+}
+
 const S: Record<string, CSSProperties> = {
   page: {
     height: "100%",
@@ -178,11 +273,22 @@ const S: Record<string, CSSProperties> = {
     borderRadius: "12px",
     padding: "0.85rem",
   },
+  sectionHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: "1rem",
+    marginBottom: "0.6rem",
+  },
   sectionTitle: {
-    margin: "0 0 0.6rem",
+    margin: 0,
     fontSize: "1rem",
     fontWeight: 700,
     color: "#e8edf5",
+  },
+  statusLine: {
+    color: "#94a3b8",
+    fontSize: "0.78rem",
   },
   subTitle: {
     margin: "0 0 0.5rem",
@@ -190,8 +296,14 @@ const S: Record<string, CSSProperties> = {
     fontWeight: 600,
     color: "#cbd5e1",
   },
-
-  // Camera grid
+  infoText: {
+    color: "#94a3b8",
+    fontSize: "0.84rem",
+  },
+  errorText: {
+    color: "#f87171",
+    fontSize: "0.84rem",
+  },
   camGrid: {
     display: "grid",
     gridTemplateColumns: "repeat(2, 1fr)",
@@ -200,32 +312,43 @@ const S: Record<string, CSSProperties> = {
   camCard: {
     border: "1px solid #1e293b",
     borderRadius: "10px",
-    overflow: "hidden",
+    padding: "0.85rem",
+    background: "#0c1220",
   },
-  camFeed: {
-    height: 160,
-    display: "grid",
-    placeItems: "center",
-    background: "linear-gradient(145deg, #1a2332, #263244)",
-    color: "#7dd3fc",
-    fontWeight: 600,
-    fontSize: "0.9rem",
-  },
-  camMeta: {
+  camHeader: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
-    padding: "8px 12px",
-    fontSize: "0.78rem",
-    color: "#94a3b8",
-    background: "#0c1220",
+    gap: "0.75rem",
+    marginBottom: "0.65rem",
   },
-  camId: {
+  camName: {
+    color: "#e8edf5",
+  },
+  camMetrics: {
+    display: "grid",
+    gridTemplateColumns: "repeat(2, 1fr)",
+    gap: "0.5rem",
+  },
+  metric: {
+    border: "1px solid #1e293b",
+    borderRadius: "8px",
+    padding: "0.5rem 0.65rem",
+    background: "#111827",
+    display: "flex",
+    flexDirection: "column",
+    gap: "2px",
+  },
+  metricLabel: {
     color: "#64748b",
-    fontSize: "0.72rem",
+    fontSize: "0.65rem",
+    textTransform: "uppercase",
+    letterSpacing: "0.08em",
+    fontWeight: 600,
   },
-
-  // Table
+  metricValue: {
+    color: "#e8edf5",
+  },
   tableWrap: {
     overflowX: "auto",
     border: "1px solid #1e293b",
@@ -234,46 +357,18 @@ const S: Record<string, CSSProperties> = {
   table: {
     width: "100%",
     borderCollapse: "collapse",
-    minWidth: 900,
+    minWidth: 720,
   },
-  coordText: {
-    color: "#93c5fd",
-    fontFamily: "monospace",
+  plateCell: {
+    fontFamily: "'SF Mono', 'Fira Code', monospace",
     fontWeight: 700,
-    fontSize: "0.78rem",
+    color: "#e8edf5",
   },
-  viewBtn: {
-    color: "#fff",
-    background: "linear-gradient(180deg, #2563eb, #1d4ed8)",
-    padding: "6px 12px",
-    borderRadius: "6px",
-    fontSize: "0.75rem",
-    fontWeight: 600,
-    border: "none",
-    cursor: "pointer",
-    whiteSpace: "nowrap",
-    minHeight: "32px",
-  },
-
-  // Detail panel
   detailPanel: {
     background: "#0c1220",
     border: "1px solid #1e293b",
     borderRadius: "12px",
     padding: "0.85rem",
-  },
-  detailLayout: {
-    display: "grid",
-    gridTemplateColumns: "220px 1fr",
-    gap: "0.85rem",
-    alignItems: "start",
-  },
-  scanPhoto: {
-    width: "100%",
-    height: 170,
-    objectFit: "cover",
-    borderRadius: "10px",
-    border: "1px solid #1e293b",
   },
   detailGrid: {
     display: "grid",
@@ -295,35 +390,5 @@ const S: Record<string, CSSProperties> = {
     textTransform: "uppercase",
     letterSpacing: "0.08em",
     fontWeight: 600,
-  },
-
-  // Quick actions
-  quickActions: {
-    marginTop: "0.75rem",
-    display: "flex",
-    flexWrap: "wrap",
-    gap: "8px",
-  },
-  quickBtnPrimary: {
-    color: "#fff",
-    background: "linear-gradient(180deg, #2563eb, #1d4ed8)",
-    border: "1px solid #3b82f6",
-    borderRadius: "8px",
-    padding: "10px 16px",
-    fontWeight: 700,
-    fontSize: "0.82rem",
-    cursor: "pointer",
-    minHeight: "42px",
-  },
-  quickBtn: {
-    color: "#e8edf5",
-    background: "#1a2332",
-    border: "1px solid #334155",
-    borderRadius: "8px",
-    padding: "10px 16px",
-    fontWeight: 600,
-    fontSize: "0.82rem",
-    cursor: "pointer",
-    minHeight: "42px",
   },
 };

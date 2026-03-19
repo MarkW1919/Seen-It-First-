@@ -9,11 +9,12 @@ app.py (which mounts the navigation router) and navigation.py
 from typing import TYPE_CHECKING, Any
 import threading
 
+from edge.navigation.arrival_detector import ArrivalDetector
 from edge.navigation.geocoder import Geocoder
 from edge.navigation.router import Router
-from edge.navigation.arrival_detector import ArrivalDetector
 
 if TYPE_CHECKING:
+    from edge.inference.events import EventPublisher
     from edge.inference.scheduler import InferenceScheduler
     from edge.ranking.engine import RankingEngine
     from edge.storage.repository import DetectionRepository
@@ -72,26 +73,28 @@ class NavigationState:
 
     def __init__(
         self,
-        scheduler:        "InferenceScheduler",
-        geocoder:         Geocoder,
-        router:           Router,
+        scheduler: "InferenceScheduler",
+        geocoder: Geocoder,
+        router: Router,
         arrival_detector: ArrivalDetector,
-        ws_manager:       Any,       # ConnectionManager — typed as Any to avoid re-importing
-        ranking_engine:   "RankingEngine | None" = None,
-        gps_state:        "GpsState | None" = None,
-        repository:       "DetectionRepository | None" = None,
+        ws_manager: Any,
+        ranking_engine: "RankingEngine | None" = None,
+        gps_state: "GpsState | None" = None,
+        repository: "DetectionRepository | None" = None,
+        event_publisher: "EventPublisher | None" = None,
     ):
-        self.scheduler        = scheduler
-        self.geocoder         = geocoder
-        self.router           = router
+        self.scheduler = scheduler
+        self.geocoder = geocoder
+        self.router = router
         self.arrival_detector = arrival_detector
-        self.ws_manager       = ws_manager
-        self.ranking_engine   = ranking_engine
-        self.gps_state        = gps_state or GpsState()
-        self.repository       = repository
+        self.ws_manager = ws_manager
+        self.ranking_engine = ranking_engine
+        self.gps_state = gps_state or GpsState()
+        self.repository = repository
+        self.event_publisher = event_publisher
 
         # Navigation session state
         self.is_navigating: bool = False
-        self.destination: dict | None = None        # {lat, lon, display_name, radius_ft, radius_m}
-        self.current_pos: dict | None = None        # {lat, lon}
-        self.current_route: dict | None = None      # route payload for status
+        self.destination: dict | None = None
+        self.current_pos: dict | None = None
+        self.current_route: dict | None = None

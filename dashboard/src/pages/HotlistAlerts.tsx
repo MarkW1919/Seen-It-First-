@@ -1,160 +1,174 @@
-import { useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useWebSocket } from "../hooks/useWebSocket";
+import type { AlertEvent, OperatorProfile, RecentEventsResponse, WsEvent } from "../types/navigation";
 
-// ---------------------------------------------------------------------------
-// Mock data
-// ---------------------------------------------------------------------------
-const HOTLIST_ALERTS = [
-  {
-    id: "hl-001",
-    plate: "8ABC123",
-    level: "HIGH" as const,
-    reason: "Stolen Vehicle",
-    time: "2 min ago",
-    camera: "Gate North",
-    make: "Ford",
-    model: "Explorer",
-    color: "Black",
-    year: "2019-2022",
-    notes: "Subject considered armed. Do not approach without backup.",
-  },
-  {
-    id: "hl-002",
-    plate: "4KJX998",
-    level: "MED" as const,
-    reason: "BOLO Match",
-    time: "11 min ago",
-    camera: "Lot East",
-    make: "Toyota",
-    model: "Camry",
-    color: "Silver",
-    year: "2018-2021",
-    notes: "Skip trace confirmed. Owner cooperative on prior recovery.",
-  },
-  {
-    id: "hl-003",
-    plate: "7TQF201",
-    level: "HIGH" as const,
-    reason: "Felony Warrant",
-    time: "18 min ago",
-    camera: "Main Entry",
-    make: "Chevrolet",
-    model: "Tahoe",
-    color: "White",
-    year: "2020-2023",
-    notes: "Lien holder: First National Bank. 90+ days delinquent.",
-  },
-  {
-    id: "hl-004",
-    plate: "2WNB847",
-    level: "LOW" as const,
-    reason: "Expired Registration",
-    time: "42 min ago",
-    camera: "Street Cam 1",
-    make: "Honda",
-    model: "Civic",
-    color: "Blue",
-    year: "2016-2018",
-    notes: "Low priority. Flag and log only.",
-  },
-];
+const EVENTS_ENDPOINT = "/navigation/events/recent?event_type=ALERT&limit=25";
 
-type AlertLevel = "HIGH" | "MED" | "LOW";
+function isAlertEvent(event: WsEvent | AlertEvent): event is AlertEvent {
+  return event.event === "ALERT";
+}
 
-function levelColor(level: AlertLevel): string {
-  if (level === "HIGH") return "#ef4444";
-  if (level === "MED") return "#f59e0b";
+function alertId(alert: AlertEvent): string {
+  return `${alert.track_id}:${alert.camera_id}:${alert.timestamp}:${alert.plate}`;
+}
+
+function dedupeAlerts(alerts: AlertEvent[]): AlertEvent[] {
+  const seen = new Set<string>();
+  const deduped: AlertEvent[] = [];
+  for (const alert of alerts) {
+    const key = alertId(alert);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(alert);
+  }
+  return deduped;
+}
+
+function formatAlertTime(timestamp: number): string {
+  return new Date(timestamp * 1000).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function priorityColor(priority: string): string {
+  const normalized = priority.trim().toUpperCase();
+  if (normalized === "HIGH") return "#ef4444";
+  if (normalized === "MED" || normalized === "MEDIUM") return "#f59e0b";
   return "#64748b";
 }
 
-function levelBg(level: AlertLevel): string {
-  if (level === "HIGH") return "rgba(239,68,68,0.12)";
-  if (level === "MED") return "rgba(245,158,11,0.08)";
-  return "rgba(100,116,139,0.08)";
-}
-
-// ---------------------------------------------------------------------------
-// Hotlist Alerts Tab
-// ---------------------------------------------------------------------------
 export default function HotlistAlerts() {
+  const [alerts, setAlerts] = useState<AlertEvent[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const selected = HOTLIST_ALERTS.find((a) => a.id === selectedId) ?? null;
+
+  const profileQuery = useQuery<OperatorProfile>({
+    queryKey: ["operator-profile"],
+    queryFn: async () => {
+      const res = await fetch("/navigation/operator-profile");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json() as Promise<OperatorProfile>;
+    },
+    staleTime: 30_000,
+  });
+
+  const { data, isLoading, error } = useQuery<RecentEventsResponse>({
+    queryKey: ["hotlist-alerts"],
+    queryFn: async () => {
+      const res = await fetch(EVENTS_ENDPOINT);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json() as Promise<RecentEventsResponse>;
+    },
+    refetchInterval: (profileQuery.data?.hotlist_refresh_sec ?? 60) * 1000,
+  });
+
+  useEffect(() => {
+    const incoming = (data?.events ?? []).filter(isAlertEvent);
+    if (incoming.length === 0) return;
+    setAlerts(dedupeAlerts(incoming));
+  }, [data]);
+
+  useWebSocket(
+    useCallback((event: WsEvent) => {
+      if (!isAlertEvent(event)) return;
+      setAlerts((prev) => dedupeAlerts([event, ...prev]).slice(0, 25));
+      setSelectedId((prev) => prev ?? alertId(event));
+    }, []),
+  );
+
+  useEffect(() => {
+    if (alerts.length > 0 && !selectedId) {
+      setSelectedId(alertId(alerts[0]));
+    }
+  }, [alerts, selectedId]);
+
+  const selected = useMemo(
+    () => alerts.find((alert) => alertId(alert) === selectedId) ?? null,
+    [alerts, selectedId],
+  );
 
   return (
     <div style={S.page}>
       <div style={S.layout}>
-        {/* Alert List */}
         <div style={S.listPanel}>
           <div style={S.listHeader}>
             <h2 style={S.title}>Active Hotlist Alerts</h2>
-            <span style={S.countBadge}>{HOTLIST_ALERTS.length}</span>
+            <span style={S.countBadge}>{alerts.length}</span>
           </div>
+
+          {isLoading && alerts.length === 0 && <p style={S.infoText}>Loading recent alerts...</p>}
+          {error instanceof Error && <p style={S.errorText}>Unable to load recent alerts: {error.message}</p>}
+          {!isLoading && alerts.length === 0 && <p style={S.infoText}>No live hotlist alerts have been published yet.</p>}
+
           <div style={S.alertStack}>
-            {HOTLIST_ALERTS.map((a) => (
-              <button
-                key={a.id}
-                style={{
-                  ...S.alertCard,
-                  borderLeft: `4px solid ${levelColor(a.level)}`,
-                  background: a.id === selectedId ? "rgba(37,99,235,0.12)" : levelBg(a.level),
-                }}
-                onClick={() => setSelectedId(a.id === selectedId ? null : a.id)}
-              >
-                <div style={S.alertTop}>
-                  <span style={S.plate}>{a.plate}</span>
-                  <div style={S.alertRight}>
-                    <span style={{ ...S.levelBadge, background: levelColor(a.level) }}>{a.level}</span>
-                    <span style={S.timeAgo}>{a.time}</span>
+            {alerts.map((alert) => {
+              const id = alertId(alert);
+              return (
+                <button
+                  key={id}
+                  style={{
+                    ...S.alertCard,
+                    borderLeft: `4px solid ${priorityColor(alert.priority)}`,
+                    background: id === selectedId ? "rgba(37,99,235,0.12)" : "rgba(15,23,42,0.9)",
+                  }}
+                  onClick={() => setSelectedId(id)}
+                >
+                  <div style={S.alertTop}>
+                    <span style={S.plate}>{alert.plate}</span>
+                    <div style={S.alertRight}>
+                      <span style={{ ...S.levelBadge, background: priorityColor(alert.priority) }}>
+                        {alert.priority.toUpperCase()}
+                      </span>
+                      <span style={S.timeAgo}>{formatAlertTime(alert.timestamp)}</span>
+                    </div>
                   </div>
-                </div>
-                <div style={S.alertInfo}>
-                  <span style={S.reason}>{a.reason}</span>
-                  <span style={S.dot}>·</span>
-                  <span style={S.camera}>{a.camera}</span>
-                </div>
-                <div style={S.vehicleDesc}>
-                  {a.color} {a.make} {a.model} ({a.year})
-                </div>
-              </button>
-            ))}
+                  <div style={S.alertInfo}>
+                    <span style={S.reason}>{alert.reason}</span>
+                    <span style={S.dot}>|</span>
+                    <span style={S.camera}>{alert.camera_id}</span>
+                  </div>
+                  <div style={S.vehicleDesc}>
+                    Vehicle class: {alert.vehicle_class ?? "Unknown"} | Confidence: {(alert.confidence * 100).toFixed(0)}%
+                  </div>
+                </button>
+              );
+            })}
           </div>
         </div>
 
-        {/* Detail Panel */}
         <div style={S.detailPanel}>
           {selected ? (
             <>
               <div style={S.detailHeader}>
-                <span style={{ ...S.levelBadge, ...S.detailBadge, background: levelColor(selected.level) }}>{selected.level} PRIORITY</span>
-                <span style={S.detailTime}>{selected.time}</span>
+                <span style={{ ...S.levelBadge, ...S.detailBadge, background: priorityColor(selected.priority) }}>
+                  {selected.priority.toUpperCase()} PRIORITY
+                </span>
+                <span style={S.detailTime}>{formatAlertTime(selected.timestamp)}</span>
               </div>
 
               <div style={S.detailPlate}>{selected.plate}</div>
               <div style={S.detailReason}>{selected.reason}</div>
 
               <div style={S.detailGrid}>
-                <DRow label="Make" value={selected.make} />
-                <DRow label="Model" value={selected.model} />
-                <DRow label="Color" value={selected.color} />
-                <DRow label="Year" value={selected.year} />
-                <DRow label="Camera" value={selected.camera} />
+                <DRow label="Camera" value={selected.camera_id} />
+                <DRow label="Track" value={String(selected.track_id)} />
+                <DRow label="Vehicle class" value={selected.vehicle_class ?? "Unknown"} />
+                <DRow label="Confidence" value={`${(selected.confidence * 100).toFixed(0)}%`} />
               </div>
 
               <div style={S.notesBox}>
-                <span style={S.notesLabel}>FIELD NOTES</span>
-                <p style={S.notesText}>{selected.notes}</p>
-              </div>
-
-              <div style={S.detailActions}>
-                <button style={S.actionPrimary}>Navigate to Alert</button>
-                <button style={S.actionBtn}>Dispatch Recovery</button>
-                <button style={S.actionBtn}>Acknowledge</button>
-                <button style={S.actionBtnDismiss}>Dismiss</button>
+                <span style={S.notesLabel}>Operator Guidance</span>
+                <p style={S.notesText}>
+                  This panel reflects live hotlist alert events from the edge runtime. Use the Navigation HUD to route to the scene and the Camera Ops page to review recent event context.
+                </p>
               </div>
             </>
           ) : (
             <div style={S.emptyDetail}>
-              <div style={S.emptyIcon}>◎</div>
-              <p style={S.emptyText}>Select an alert to view full details</p>
+              <div style={S.emptyIcon}>ALRT</div>
+              <p style={S.emptyText}>Select an alert to inspect the live event details.</p>
             </div>
           )}
         </div>
@@ -172,9 +186,6 @@ function DRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Styles
-// ---------------------------------------------------------------------------
 const S: Record<string, CSSProperties> = {
   page: {
     height: "100%",
@@ -211,6 +222,14 @@ const S: Record<string, CSSProperties> = {
     padding: "2px 10px",
     fontSize: "0.75rem",
     fontWeight: 700,
+  },
+  infoText: {
+    color: "#94a3b8",
+    fontSize: "0.85rem",
+  },
+  errorText: {
+    color: "#f87171",
+    fontSize: "0.85rem",
   },
   alertStack: {
     display: "flex",
@@ -281,8 +300,6 @@ const S: Record<string, CSSProperties> = {
     fontSize: "0.78rem",
     color: "#64748b",
   },
-
-  // Detail panel
   detailPanel: {
     background: "#111827",
     border: "1px solid #1e293b",
@@ -359,48 +376,6 @@ const S: Record<string, CSSProperties> = {
     margin: "4px 0 0",
     lineHeight: 1.5,
   },
-  detailActions: {
-    display: "flex",
-    flexWrap: "wrap",
-    gap: "8px",
-    marginTop: "auto",
-    paddingTop: "0.5rem",
-  },
-  actionPrimary: {
-    background: "linear-gradient(180deg, #16a34a, #15803d)",
-    color: "#fff",
-    border: "1px solid #22c55e",
-    borderRadius: "8px",
-    padding: "12px 18px",
-    fontWeight: 700,
-    fontSize: "0.85rem",
-    cursor: "pointer",
-    minHeight: "48px",
-  },
-  actionBtn: {
-    background: "#1a2332",
-    color: "#e8edf5",
-    border: "1px solid #334155",
-    borderRadius: "8px",
-    padding: "12px 16px",
-    fontWeight: 600,
-    fontSize: "0.82rem",
-    cursor: "pointer",
-    minHeight: "48px",
-  },
-  actionBtnDismiss: {
-    background: "transparent",
-    color: "#64748b",
-    border: "1px solid #334155",
-    borderRadius: "8px",
-    padding: "12px 16px",
-    fontWeight: 600,
-    fontSize: "0.82rem",
-    cursor: "pointer",
-    minHeight: "48px",
-  },
-
-  // Empty state
   emptyDetail: {
     display: "flex",
     flexDirection: "column",
@@ -410,11 +385,14 @@ const S: Record<string, CSSProperties> = {
     gap: "12px",
   },
   emptyIcon: {
-    fontSize: "2.5rem",
+    fontSize: "1.4rem",
+    fontWeight: 800,
     color: "#334155",
+    letterSpacing: "0.12em",
   },
   emptyText: {
     color: "#475569",
     fontSize: "0.9rem",
+    textAlign: "center",
   },
 };

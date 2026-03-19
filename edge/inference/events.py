@@ -20,6 +20,7 @@ silently dropped — the pipeline never blocks waiting for a client.
 import asyncio
 import logging
 import threading
+from collections import deque
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -39,6 +40,7 @@ class EventPublisher:
         self._ws_manager = ws_manager
         self._loop: asyncio.AbstractEventLoop | None = None
         self._lock = threading.Lock()
+        self._recent_events: deque[dict] = deque(maxlen=200)
 
     # ------------------------------------------------------------------
     # Wiring
@@ -79,7 +81,9 @@ class EventPublisher:
             data.get("camera_id"),
             data.get("plate_conf", 0.0),
         )
-        self._broadcast({"event": "DETECTION", **data})
+        payload = {"event": "DETECTION", **data}
+        self._remember_event(payload)
+        self._broadcast(payload)
 
     def publish_alert(self, data: dict):
         """
@@ -96,7 +100,9 @@ class EventPublisher:
             data.get("confidence", 0.0),
             data.get("priority"),
         )
-        self._broadcast({"event": "ALERT", **data})
+        payload = {"event": "ALERT", **data}
+        self._remember_event(payload)
+        self._broadcast(payload)
 
     def publish_system_event(self, event_type: str, data: dict):
         """
@@ -106,7 +112,25 @@ class EventPublisher:
             event_type: Short uppercase string identifier.
             data:       Arbitrary event payload.
         """
-        self._broadcast({"event": event_type, **data})
+        payload = {"event": event_type, **data}
+        self._remember_event(payload)
+        self._broadcast(payload)
+
+    def recent_events(self, event_type: str | None = None, limit: int = 50) -> list[dict]:
+        """Return recent events newest-first, optionally filtered by type."""
+        normalized_type = event_type.upper().strip() if event_type else None
+        safe_limit = max(1, min(int(limit), 200))
+
+        with self._lock:
+            events = list(self._recent_events)
+
+        if normalized_type:
+            events = [
+                event for event in events
+                if str(event.get("event", "")).upper() == normalized_type
+            ]
+
+        return events[:safe_limit]
 
     # ------------------------------------------------------------------
     # Internal
@@ -124,3 +148,8 @@ class EventPublisher:
             return  # uvicorn has shut down
 
         asyncio.run_coroutine_threadsafe(ws_manager.broadcast(payload), loop)
+
+    def _remember_event(self, payload: dict):
+        """Store a bounded in-memory history for dashboard hydration."""
+        with self._lock:
+            self._recent_events.appendleft(dict(payload))

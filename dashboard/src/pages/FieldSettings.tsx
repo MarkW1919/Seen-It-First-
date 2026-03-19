@@ -1,148 +1,230 @@
-import { useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { OperatorProfile } from "../types/navigation";
 
-// ---------------------------------------------------------------------------
-// Settings data
-// ---------------------------------------------------------------------------
-interface Setting {
-  key: string;
+type SettingField = {
+  key: keyof OperatorProfile;
   label: string;
   description: string;
-  type: "select" | "checkbox";
-  options?: string[];
-  defaultValue: string | boolean;
+  kind: "select";
+  options: Array<{ value: number; label: string }>;
+};
+
+const ACTIVE_FIELDS: SettingField[] = [
+  {
+    key: "arrival_distance_ft",
+    label: "Arrival trigger distance",
+    description: "Default geofence distance used when a new navigation mission starts.",
+    kind: "select",
+    options: [
+      { value: 100, label: "100 ft" },
+      { value: 200, label: "200 ft" },
+      { value: 300, label: "300 ft" },
+      { value: 500, label: "500 ft" },
+      { value: 1000, label: "1000 ft" },
+    ],
+  },
+  {
+    key: "hotlist_refresh_sec",
+    label: "Hotlist refresh interval",
+    description: "How often the hotlist board refreshes recent alert history from the edge runtime.",
+    kind: "select",
+    options: [
+      { value: 15, label: "15 sec" },
+      { value: 30, label: "30 sec" },
+      { value: 60, label: "60 sec" },
+      { value: 120, label: "2 min" },
+      { value: 300, label: "5 min" },
+    ],
+  },
+  {
+    key: "max_tracked_vehicles",
+    label: "Max tracked vehicles",
+    description: "Upper bound for how many candidate vehicles are shown once scanning is active.",
+    kind: "select",
+    options: [
+      { value: 5, label: "5" },
+      { value: 10, label: "10" },
+      { value: 15, label: "15" },
+      { value: 20, label: "20" },
+      { value: 30, label: "30" },
+    ],
+  },
+];
+
+const DEFAULT_PROFILE: OperatorProfile = {
+  hotlist_refresh_sec: 60,
+  arrival_distance_ft: 300,
+  show_traffic_overlays: true,
+  ocr_confidence_threshold: 0.8,
+  max_tracked_vehicles: 10,
+  auto_checkin_on_arrival: true,
+  silent_shift_mode: false,
+  low_storage_warning: true,
+};
+
+async function getOperatorProfile(): Promise<OperatorProfile> {
+  const res = await fetch("/navigation/operator-profile");
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status}`);
+  }
+  return res.json() as Promise<OperatorProfile>;
 }
 
-const ALERT_NAV: Setting[] = [
-  { key: "hotlist_refresh", label: "Hotlist refresh interval", description: "How often incoming hotlist alerts refresh.", type: "select", options: ["30 sec", "60 sec", "2 min", "5 min"], defaultValue: "60 sec" },
-  { key: "arrival_distance", label: "Arrival trigger distance", description: "Distance to auto-mark on-scene status.", type: "select", options: ["100 ft", "200 ft", "300 ft", "500 ft", "1000 ft"], defaultValue: "300 ft" },
-  { key: "traffic_overlays", label: "Show route traffic overlays", description: "Display congestion and ETA impact while driving.", type: "checkbox", defaultValue: true },
-];
+async function putOperatorProfile(profile: OperatorProfile): Promise<OperatorProfile> {
+  const res = await fetch("/navigation/operator-profile", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(profile),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error((detail as { detail?: string }).detail ?? res.statusText);
+  }
+  return res.json() as Promise<OperatorProfile>;
+}
 
-const DETECTION: Setting[] = [
-  { key: "ocr_threshold", label: "OCR confidence threshold", description: "Minimum confidence before plate hit is surfaced.", type: "select", options: ["0.70", "0.75", "0.80", "0.85", "0.90"], defaultValue: "0.80" },
-  { key: "max_tracked", label: "Max tracked vehicles", description: "Limit active tracking cards to reduce visual load.", type: "select", options: ["5", "10", "15", "20"], defaultValue: "10" },
-  { key: "auto_checkin", label: "Auto check-in on arrival", description: "Automatically transition workflow state when on scene.", type: "checkbox", defaultValue: true },
-];
-
-const NOTIFICATIONS: Setting[] = [
-  { key: "silent_mode", label: "Silent shift mode", description: "Suppress alert sounds and vibration cues.", type: "checkbox", defaultValue: false },
-  { key: "low_storage", label: "Low storage warning", description: "Warn before evidence exports are impacted.", type: "checkbox", defaultValue: true },
-];
-
-// ---------------------------------------------------------------------------
-// Field Settings Tab
-// ---------------------------------------------------------------------------
 export default function FieldSettings() {
-  const [profile, setProfile] = useState("default");
-  const [values, setValues] = useState<Record<string, string | boolean>>(() => {
-    const v: Record<string, string | boolean> = {};
-    [...ALERT_NAV, ...DETECTION, ...NOTIFICATIONS].forEach((s) => { v[s.key] = s.defaultValue; });
-    return v;
+  const queryClient = useQueryClient();
+  const profileQuery = useQuery<OperatorProfile>({
+    queryKey: ["operator-profile"],
+    queryFn: getOperatorProfile,
   });
 
-  const updateValue = (key: string, value: string | boolean) => {
-    setValues((prev) => ({ ...prev, [key]: value }));
+  const persistedProfile = profileQuery.data ?? DEFAULT_PROFILE;
+  const [draft, setDraft] = useState<OperatorProfile>(persistedProfile);
+  const [statusNote, setStatusNote] = useState<string>("Loading operator profile...");
+
+  useEffect(() => {
+    if (!profileQuery.data) {
+      return;
+    }
+    setDraft(profileQuery.data);
+    setStatusNote("Profile synced from the edge runtime.");
+  }, [profileQuery.data]);
+
+  const hasUnsavedChanges = useMemo(
+    () => JSON.stringify(draft) !== JSON.stringify(persistedProfile),
+    [draft, persistedProfile],
+  );
+
+  const saveMutation = useMutation<OperatorProfile, Error, OperatorProfile>({
+    mutationFn: putOperatorProfile,
+    onSuccess: (profile) => {
+      queryClient.setQueryData(["operator-profile"], profile);
+      setDraft(profile);
+      setStatusNote("Operator profile saved to the runtime.");
+    },
+    onError: (error) => {
+      setStatusNote(`Unable to save operator profile: ${error.message}`);
+    },
+  });
+
+  const updateNumericField = (key: keyof OperatorProfile, value: number) => {
+    setDraft((prev) => ({ ...prev, [key]: value }));
+    setStatusNote("Unsaved changes in this operator profile.");
   };
 
-  const resetDefaults = () => {
-    const v: Record<string, string | boolean> = {};
-    [...ALERT_NAV, ...DETECTION, ...NOTIFICATIONS].forEach((s) => { v[s.key] = s.defaultValue; });
-    setValues(v);
+  const resetToSaved = () => {
+    setDraft(persistedProfile);
+    setStatusNote("Reverted to the last saved operator profile.");
+  };
+
+  const resetToDefaults = () => {
+    setDraft(DEFAULT_PROFILE);
+    setStatusNote("Loaded the default operator profile values. Save to persist them.");
+  };
+
+  const handleSave = () => {
+    saveMutation.mutate({
+      ...persistedProfile,
+      ...draft,
+    });
   };
 
   return (
     <div style={S.page}>
       <div style={S.panel}>
-        {/* Header */}
         <div style={S.panelHeader}>
           <div>
             <h2 style={S.title}>Field Settings</h2>
-            <p style={S.subtitle}>Core controls only: tune what agents most commonly adjust during recovery operations.</p>
+            <p style={S.subtitle}>
+              These controls are wired to the persisted operator profile used by the runtime-backed dashboard.
+            </p>
+          </div>
+          <div style={S.headerStatus}>
+            <span style={S.statusLabel}>Runtime profile</span>
+            <strong style={S.statusValue}>{profileQuery.isLoading ? "Loading" : "Connected"}</strong>
           </div>
         </div>
 
-        {/* Profile bar */}
-        <div style={S.profileBar}>
-          <div style={S.profileBadge}>
-            Using {profile === "default" ? "default field" : "saved preview"} profile
+        <div style={S.noticeRow}>
+          <span style={{ ...S.noticeDot, background: saveMutation.isError ? "#ef4444" : hasUnsavedChanges ? "#f59e0b" : "#22c55e" }} />
+          <span style={S.noticeText}>{statusNote}</span>
+        </div>
+
+        {profileQuery.error instanceof Error && (
+          <div style={S.errorBox}>Unable to load the operator profile: {profileQuery.error.message}</div>
+        )}
+
+        <div style={S.profileMeta}>
+          <div style={S.metaCard}>
+            <span style={S.metaLabel}>Stored profile</span>
+            <strong style={S.metaValue}>operator_profile.json</strong>
           </div>
-          <div style={S.profileActions}>
-            <button style={S.btnSecondary} onClick={resetDefaults}>Reset defaults</button>
-            <button style={S.btnPrimary} onClick={() => setProfile("saved")}>Apply locally</button>
+          <div style={S.metaCard}>
+            <span style={S.metaLabel}>Save state</span>
+            <strong style={S.metaValue}>{hasUnsavedChanges ? "Unsaved edits" : "In sync"}</strong>
+          </div>
+          <div style={S.metaCard}>
+            <span style={S.metaLabel}>Applies to</span>
+            <strong style={S.metaValue}>Nav HUD, Hotlist, Target List</strong>
           </div>
         </div>
 
-        {/* Settings columns */}
-        <div style={S.columnsGrid}>
-          <SettingsColumn title="Alert & Navigation" color="#3b82f6" settings={ALERT_NAV} values={values} onChange={updateValue} />
-          <SettingsColumn title="Detection & Workflow" color="#06b6d4" settings={DETECTION} values={values} onChange={updateValue} />
-          <SettingsColumn title="Notifications" color="#f59e0b" settings={NOTIFICATIONS} values={values} onChange={updateValue} />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Settings Column
-// ---------------------------------------------------------------------------
-function SettingsColumn({
-  title, color, settings, values, onChange,
-}: {
-  title: string;
-  color: string;
-  settings: Setting[];
-  values: Record<string, string | boolean>;
-  onChange: (key: string, value: string | boolean) => void;
-}) {
-  return (
-    <div style={{ ...S.column, borderTop: `3px solid ${color}` }}>
-      <h3 style={{ ...S.colTitle, color }}>{title}</h3>
-      <div style={S.settingsList}>
-        {settings.map((s) => (
-          <div key={s.key} style={S.settingRow}>
-            <div style={S.settingInfo}>
-              <span style={S.settingLabel}>{s.label}</span>
-              <span style={S.settingDesc}>{s.description}</span>
-            </div>
-            {s.type === "select" && s.options && (
+        <div style={S.settingsGrid}>
+          {ACTIVE_FIELDS.map((field) => (
+            <div key={field.key} style={S.settingCard}>
+              <div style={S.settingHeader}>
+                <h3 style={S.settingTitle}>{field.label}</h3>
+                <span style={S.settingKey}>{field.key}</span>
+              </div>
+              <p style={S.settingDescription}>{field.description}</p>
               <select
                 style={S.select}
-                value={values[s.key] as string}
-                onChange={(e) => onChange(s.key, e.target.value)}
+                value={String(draft[field.key])}
+                onChange={(event) => updateNumericField(field.key, Number(event.target.value))}
+                disabled={profileQuery.isLoading || saveMutation.isPending}
               >
-                {s.options.map((opt) => (
-                  <option key={opt} value={opt}>{opt}</option>
+                {field.options.map((option) => (
+                  <option key={`${field.key}-${option.value}`} value={option.value}>
+                    {option.label}
+                  </option>
                 ))}
               </select>
-            )}
-            {s.type === "checkbox" && (
-              <label style={S.checkLabel}>
-                <input
-                  type="checkbox"
-                  checked={values[s.key] as boolean}
-                  onChange={(e) => onChange(s.key, e.target.checked)}
-                  style={S.checkbox}
-                />
-                <span style={{
-                  ...S.checkBox,
-                  background: values[s.key] ? "#3b82f6" : "transparent",
-                  borderColor: values[s.key] ? "#3b82f6" : "#475569",
-                }}>
-                  {values[s.key] && "✓"}
-                </span>
-              </label>
-            )}
-          </div>
-        ))}
+              <div style={S.savedLine}>
+                Saved value: <strong>{field.options.find((option) => option.value === persistedProfile[field.key])?.label ?? String(persistedProfile[field.key])}</strong>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div style={S.actionRow}>
+          <button style={S.btnSecondary} onClick={resetToSaved} disabled={saveMutation.isPending || !hasUnsavedChanges}>
+            Discard edits
+          </button>
+          <button style={S.btnSecondary} onClick={resetToDefaults} disabled={saveMutation.isPending}>
+            Load defaults
+          </button>
+          <button style={S.btnPrimary} onClick={handleSave} disabled={saveMutation.isPending || profileQuery.isLoading || !hasUnsavedChanges}>
+            {saveMutation.isPending ? "Saving profile..." : "Save profile"}
+          </button>
+        </div>
       </div>
     </div>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Styles
-// ---------------------------------------------------------------------------
 const S: Record<string, CSSProperties> = {
   page: {
     height: "100%",
@@ -154,12 +236,15 @@ const S: Record<string, CSSProperties> = {
     border: "1px solid #1e293b",
     borderRadius: "14px",
     padding: "1.25rem",
+    display: "flex",
+    flexDirection: "column",
+    gap: "1rem",
   },
   panelHeader: {
     display: "flex",
     justifyContent: "space-between",
+    gap: "1rem",
     alignItems: "flex-start",
-    marginBottom: "0.75rem",
   },
   title: {
     margin: 0,
@@ -168,132 +253,158 @@ const S: Record<string, CSSProperties> = {
     color: "#e8edf5",
   },
   subtitle: {
-    margin: "4px 0 0",
-    fontSize: "0.82rem",
+    margin: "6px 0 0",
+    fontSize: "0.84rem",
+    color: "#94a3b8",
+    maxWidth: "48rem",
+    lineHeight: 1.5,
+  },
+  headerStatus: {
+    background: "#0c1220",
+    border: "1px solid #334155",
+    borderRadius: "10px",
+    padding: "10px 14px",
+    display: "flex",
+    flexDirection: "column",
+    gap: "4px",
+    minWidth: "160px",
+  },
+  statusLabel: {
+    fontSize: "0.72rem",
+    textTransform: "uppercase",
+    letterSpacing: "0.08em",
     color: "#64748b",
   },
-  profileBar: {
+  statusValue: {
+    fontSize: "0.9rem",
+    color: "#e8edf5",
+  },
+  noticeRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
+    background: "#0c1220",
+    border: "1px solid #1e293b",
+    borderRadius: "10px",
+    padding: "10px 12px",
+  },
+  noticeDot: {
+    width: "10px",
+    height: "10px",
+    borderRadius: "999px",
+    flexShrink: 0,
+  },
+  noticeText: {
+    color: "#cbd5e1",
+    fontSize: "0.85rem",
+  },
+  errorBox: {
+    background: "#450a0a",
+    color: "#fecaca",
+    border: "1px solid #7f1d1d",
+    borderRadius: "10px",
+    padding: "10px 12px",
+    fontSize: "0.85rem",
+  },
+  profileMeta: {
+    display: "grid",
+    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+    gap: "12px",
+  },
+  metaCard: {
+    background: "#0c1220",
+    border: "1px solid #1e293b",
+    borderRadius: "12px",
+    padding: "12px 14px",
+    display: "flex",
+    flexDirection: "column",
+    gap: "6px",
+  },
+  metaLabel: {
+    fontSize: "0.72rem",
+    textTransform: "uppercase",
+    letterSpacing: "0.08em",
+    color: "#64748b",
+  },
+  metaValue: {
+    fontSize: "0.9rem",
+    color: "#e8edf5",
+  },
+  settingsGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+    gap: "12px",
+  },
+  settingCard: {
+    background: "#0c1220",
+    border: "1px solid #1e293b",
+    borderRadius: "12px",
+    padding: "1rem",
+    display: "flex",
+    flexDirection: "column",
+    gap: "0.75rem",
+  },
+  settingHeader: {
     display: "flex",
     justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: "1rem",
-    padding: "8px 0",
-    borderBottom: "1px solid #1e293b",
+    alignItems: "baseline",
+    gap: "12px",
   },
-  profileBadge: {
-    fontSize: "0.78rem",
+  settingTitle: {
+    margin: 0,
+    fontSize: "0.95rem",
+    fontWeight: 700,
+    color: "#e8edf5",
+  },
+  settingKey: {
+    fontSize: "0.68rem",
+    color: "#64748b",
+    textTransform: "uppercase",
+    letterSpacing: "0.08em",
+  },
+  settingDescription: {
+    margin: 0,
     color: "#94a3b8",
-    border: "1px solid #334155",
-    borderRadius: "8px",
-    padding: "6px 14px",
+    fontSize: "0.8rem",
+    lineHeight: 1.45,
   },
-  profileActions: {
+  select: {
+    background: "#111827",
+    color: "#e8edf5",
+    border: "1px solid #334155",
+    borderRadius: "10px",
+    padding: "10px 12px",
+    minHeight: "42px",
+    fontSize: "0.9rem",
+    outline: "none",
+  },
+  savedLine: {
+    color: "#64748b",
+    fontSize: "0.78rem",
+  },
+  actionRow: {
     display: "flex",
-    gap: "8px",
+    justifyContent: "flex-end",
+    gap: "10px",
   },
   btnPrimary: {
     background: "linear-gradient(180deg, #2563eb, #1d4ed8)",
     color: "#fff",
     border: "1px solid #3b82f6",
-    borderRadius: "8px",
-    padding: "8px 18px",
+    borderRadius: "10px",
+    padding: "10px 18px",
     fontWeight: 700,
-    fontSize: "0.82rem",
+    minHeight: "42px",
     cursor: "pointer",
-    minHeight: "40px",
   },
   btnSecondary: {
-    background: "#1a2332",
+    background: "#111827",
     color: "#e8edf5",
     border: "1px solid #334155",
-    borderRadius: "8px",
-    padding: "8px 18px",
+    borderRadius: "10px",
+    padding: "10px 18px",
     fontWeight: 600,
-    fontSize: "0.82rem",
+    minHeight: "42px",
     cursor: "pointer",
-    minHeight: "40px",
-  },
-
-  // Columns
-  columnsGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(3, 1fr)",
-    gap: "12px",
-  },
-  column: {
-    border: "1px solid #1e293b",
-    borderRadius: "12px",
-    padding: "1rem",
-    background: "#0c1220",
-  },
-  colTitle: {
-    margin: "0 0 0.75rem",
-    fontSize: "0.9rem",
-    fontWeight: 700,
-  },
-  settingsList: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "0.75rem",
-  },
-  settingRow: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: "12px",
-    paddingBottom: "0.65rem",
-    borderBottom: "1px solid #1e293b",
-  },
-  settingInfo: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "2px",
-    flex: 1,
-  },
-  settingLabel: {
-    fontSize: "0.85rem",
-    fontWeight: 600,
-    color: "#e8edf5",
-  },
-  settingDesc: {
-    fontSize: "0.72rem",
-    color: "#64748b",
-    lineHeight: 1.3,
-  },
-  select: {
-    background: "#1a2332",
-    color: "#e8edf5",
-    border: "1px solid #334155",
-    borderRadius: "8px",
-    padding: "8px 12px",
-    fontSize: "0.82rem",
-    cursor: "pointer",
-    minHeight: "40px",
-    minWidth: "90px",
-    outline: "none",
-  },
-  checkLabel: {
-    position: "relative",
-    cursor: "pointer",
-    display: "flex",
-    alignItems: "center",
-  },
-  checkbox: {
-    position: "absolute",
-    opacity: 0,
-    width: 0,
-    height: 0,
-  },
-  checkBox: {
-    width: "24px",
-    height: "24px",
-    borderRadius: "6px",
-    border: "2px solid #475569",
-    display: "grid",
-    placeItems: "center",
-    fontSize: "0.75rem",
-    color: "#fff",
-    fontWeight: 700,
-    transition: "all 0.15s",
   },
 };

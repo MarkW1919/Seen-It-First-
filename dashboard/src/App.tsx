@@ -1,24 +1,20 @@
-import { useState, useCallback, type CSSProperties } from "react";
+import { useCallback, useEffect, useState, type CSSProperties } from "react";
+import { useQuery } from "@tanstack/react-query";
 import NavigationHUD from "./pages/NavigationHUD";
 import CameraViews from "./pages/CameraViews";
 import HotlistAlerts from "./pages/HotlistAlerts";
 import FieldSettings from "./pages/FieldSettings";
+import type { NavStatus, RuntimeStatusResponse } from "./types/navigation";
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
 type Tab = "nav" | "hotlist" | "cameras" | "settings";
 
 const TABS: { id: Tab; label: string; icon: string }[] = [
-  { id: "nav", label: "Navigation HUD", icon: "◎" },
-  { id: "hotlist", label: "Hotlist Alerts", icon: "⚠" },
-  { id: "cameras", label: "Camera Views", icon: "◩" },
-  { id: "settings", label: "Settings", icon: "⚙" },
+  { id: "nav", label: "Navigation HUD", icon: "NAV" },
+  { id: "hotlist", label: "Hotlist Alerts", icon: "HOT" },
+  { id: "cameras", label: "Camera Ops", icon: "CAM" },
+  { id: "settings", label: "Settings", icon: "CFG" },
 ];
 
-// ---------------------------------------------------------------------------
-// Determine initial tab from URL
-// ---------------------------------------------------------------------------
 function getInitialTab(): Tab {
   const p = new URLSearchParams(window.location.search).get("screen");
   if (p === "cameras") return "cameras";
@@ -27,15 +23,32 @@ function getInitialTab(): Tab {
   return "nav";
 }
 
-// ---------------------------------------------------------------------------
-// App Shell
-// ---------------------------------------------------------------------------
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>(getInitialTab);
-  const [arrived, setArrived] = useState(false);
-  const [gpsLocked, setGpsLocked] = useState(false);
-  const [navigating, setNavigating] = useState(false);
-  const [camOnline, setCamOnline] = useState(0);
+  const [arrivedState, setArrivedState] = useState(false);
+  const [gpsLockedState, setGpsLockedState] = useState(false);
+  const [navigatingState, setNavigatingState] = useState(false);
+  const [camOnlineState, setCamOnlineState] = useState(0);
+
+  const runtimeQuery = useQuery<RuntimeStatusResponse>({
+    queryKey: ["app-runtime-status"],
+    queryFn: async () => {
+      const res = await fetch("/navigation/runtime");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json() as Promise<RuntimeStatusResponse>;
+    },
+    refetchInterval: 5_000,
+  });
+
+  const statusQuery = useQuery<NavStatus>({
+    queryKey: ["app-nav-status"],
+    queryFn: async () => {
+      const res = await fetch("/navigation/status");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json() as Promise<NavStatus>;
+    },
+    refetchInterval: 5_000,
+  });
 
   const handleNavState = useCallback((state: {
     arrived?: boolean;
@@ -43,15 +56,39 @@ export default function App() {
     navigating?: boolean;
     camOnline?: number;
   }) => {
-    if (state.arrived !== undefined) setArrived(state.arrived);
-    if (state.gpsLocked !== undefined) setGpsLocked(state.gpsLocked);
-    if (state.navigating !== undefined) setNavigating(state.navigating);
-    if (state.camOnline !== undefined) setCamOnline(state.camOnline);
+    if (state.arrived !== undefined) setArrivedState(state.arrived);
+    if (state.gpsLocked !== undefined) setGpsLockedState(state.gpsLocked);
+    if (state.navigating !== undefined) setNavigatingState(state.navigating);
+    if (state.camOnline !== undefined) setCamOnlineState(state.camOnline);
   }, []);
+
+  const arrived = statusQuery.data?.arrival.arrived ?? arrivedState;
+  const navigating = statusQuery.data?.navigating ?? navigatingState;
+  const gpsLocked = runtimeQuery.data?.operator_gps !== null && runtimeQuery.data?.operator_gps !== undefined
+    ? true
+    : gpsLockedState;
+  const camOnline = runtimeQuery.data?.cameras
+    ? runtimeQuery.data.cameras.filter((camera) => camera.status === "Online").length
+    : camOnlineState;
+  const totalCameras = runtimeQuery.data?.cameras.length ?? 4;
+  const camStatusColor = totalCameras > 0 && camOnline === totalCameras
+    ? "#22c55e"
+    : camOnline >= 1
+      ? "#f59e0b"
+      : "#ef4444";
+
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (activeTab === "nav") {
+      url.searchParams.delete("screen");
+    } else {
+      url.searchParams.set("screen", activeTab);
+    }
+    window.history.replaceState({}, "", url);
+  }, [activeTab]);
 
   return (
     <div style={S.shell}>
-      {/* ── Top Bar ─────────────────────────────────────────────── */}
       <header style={S.header}>
         <div style={S.brand}>
           <span style={S.logo}>SEEN-IT-FIRST</span>
@@ -74,15 +111,13 @@ export default function App() {
         </nav>
       </header>
 
-      {/* ── Arrived Banner ──────────────────────────────────────── */}
       {arrived && (
         <div style={S.arrivedBanner}>
-          <span style={S.arrivedIcon}>●</span>
-          ARRIVED AT LOCATION — LPR SCANNING ACTIVATED
+          <span style={S.arrivedIcon}>LIVE</span>
+          ARRIVED AT LOCATION - LPR SCANNING ACTIVE
         </div>
       )}
 
-      {/* ── Main Content ────────────────────────────────────────── */}
       <main style={S.main}>
         {activeTab === "nav" && <NavigationHUD onStateChange={handleNavState} />}
         {activeTab === "hotlist" && <HotlistAlerts />}
@@ -90,7 +125,6 @@ export default function App() {
         {activeTab === "settings" && <FieldSettings />}
       </main>
 
-      {/* ── Status Bar ──────────────────────────────────────────── */}
       <footer style={S.statusBar}>
         <StatusPill
           label="GPS"
@@ -100,26 +134,23 @@ export default function App() {
         <StatusPill label="DB" value="Online" color="#22c55e" />
         <StatusPill
           label="CAM"
-          value={`${camOnline}/4 Online`}
-          color={camOnline >= 3 ? "#22c55e" : camOnline >= 1 ? "#f59e0b" : "#ef4444"}
+          value={`${camOnline}/${totalCameras} Online`}
+          color={camStatusColor}
         />
         <StatusPill label="Storage" value="OK" color="#22c55e" />
         <div style={S.statusSpacer} />
         <span style={S.modeLabel}>
           {navigating
-            ? "Navigating · Route active"
+            ? "Navigating | route active"
             : arrived
-              ? "On scene · Scanning"
-              : "Navigation idle · Quad-scan mode"}
+              ? "On scene | scanning"
+              : "Navigation idle | quad scan mode"}
         </span>
       </footer>
     </div>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Status Pill sub-component
-// ---------------------------------------------------------------------------
 function StatusPill({ label, value, color }: { label: string; value: string; color: string }) {
   return (
     <div style={S.pill}>
@@ -130,9 +161,6 @@ function StatusPill({ label, value, color }: { label: string; value: string; col
   );
 }
 
-// ---------------------------------------------------------------------------
-// Styles
-// ---------------------------------------------------------------------------
 const S: Record<string, CSSProperties> = {
   shell: {
     display: "flex",
@@ -141,8 +169,6 @@ const S: Record<string, CSSProperties> = {
     overflow: "hidden",
     background: "#080c14",
   },
-
-  // Header
   header: {
     display: "flex",
     alignItems: "center",
@@ -198,10 +224,11 @@ const S: Record<string, CSSProperties> = {
     border: "1px solid #2563eb",
   },
   tabIcon: {
-    fontSize: "0.9rem",
+    fontSize: "0.72rem",
+    fontWeight: 800,
+    letterSpacing: "0.08em",
+    color: "#7dd3fc",
   },
-
-  // Arrived banner
   arrivedBanner: {
     display: "flex",
     alignItems: "center",
@@ -215,21 +242,17 @@ const S: Record<string, CSSProperties> = {
     letterSpacing: "0.06em",
     textTransform: "uppercase",
     flexShrink: 0,
-    animation: "pulse-glow 2s ease-in-out infinite",
   },
   arrivedIcon: {
-    color: "#4ade80",
-    fontSize: "1.1rem",
+    fontSize: "0.72rem",
+    fontWeight: 800,
+    color: "#dcfce7",
   },
-
-  // Main
   main: {
     flex: 1,
     overflow: "hidden",
     position: "relative",
   },
-
-  // Status bar
   statusBar: {
     display: "flex",
     alignItems: "center",

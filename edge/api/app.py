@@ -295,6 +295,7 @@ def create_app(
         ranking_engine=ranking_engine,
         gps_state=gps_state,
         repository=repository,
+        event_publisher=event_publisher,
     )
 
     @asynccontextmanager

@@ -2,7 +2,11 @@
 Navigation API endpoints.
 """
 
+import json
 import logging
+import time
+from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -24,6 +28,19 @@ _LAT_MIN = -90.0
 _LAT_MAX = 90.0
 _LON_MIN = -180.0
 _LON_MAX = 180.0
+BASE_DIR = Path(__file__).resolve().parents[2]
+OPERATOR_PROFILE_PATH = BASE_DIR / "data" / "operator_profile.json"
+
+_OPERATOR_PROFILE_DEFAULTS = {
+    "hotlist_refresh_sec": 60,
+    "arrival_distance_ft": 300,
+    "show_traffic_overlays": True,
+    "ocr_confidence_threshold": 0.80,
+    "max_tracked_vehicles": 10,
+    "auto_checkin_on_arrival": True,
+    "silent_shift_mode": False,
+    "low_storage_warning": True,
+}
 
 
 class GeocodeRequest(BaseModel):
@@ -103,8 +120,65 @@ class DetectionSearchResponse(BaseModel):
     detections: list[DetectionSummary]
 
 
+class RuntimeCameraSummary(BaseModel):
+    camera_id: str
+    name: str
+    status: str
+    fps: float
+    queue_depth: int
+    last_frame_age_s: float | None = None
+
+
+class RuntimeStatusResponse(BaseModel):
+    pipeline_active: bool
+    navigating: bool
+    arrived: bool
+    ws_clients: int
+    operator_gps: dict[str, float] | None = None
+    cameras: list[RuntimeCameraSummary]
+
+
+class RecentEventsResponse(BaseModel):
+    total: int
+    events: list[dict[str, Any]]
+
+
+class OperatorProfile(BaseModel):
+    hotlist_refresh_sec: int = Field(default=60, ge=15, le=300)
+    arrival_distance_ft: int = Field(default=300, ge=1, le=1320)
+    show_traffic_overlays: bool = True
+    ocr_confidence_threshold: float = Field(default=0.80, ge=0.50, le=0.99)
+    max_tracked_vehicles: int = Field(default=10, ge=1, le=30)
+    auto_checkin_on_arrival: bool = True
+    silent_shift_mode: bool = False
+    low_storage_warning: bool = True
+
+
 def _nav(request: Request) -> NavigationState:
     return request.app.state.nav
+
+
+def _load_operator_profile() -> OperatorProfile:
+    if not OPERATOR_PROFILE_PATH.exists():
+        return OperatorProfile(**_OPERATOR_PROFILE_DEFAULTS)
+
+    try:
+        raw = json.loads(OPERATOR_PROFILE_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        logger.exception("Failed to load operator profile: %s", OPERATOR_PROFILE_PATH)
+        return OperatorProfile(**_OPERATOR_PROFILE_DEFAULTS)
+
+    merged = {**_OPERATOR_PROFILE_DEFAULTS, **raw}
+    return OperatorProfile(**merged)
+
+
+def _save_operator_profile(profile: OperatorProfile) -> OperatorProfile:
+    OPERATOR_PROFILE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    OPERATOR_PROFILE_PATH.write_text(
+        profile.model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+    return profile
 
 
 @router.post("/geocode", response_model=GeocodeResponse)
@@ -252,6 +326,64 @@ def get_targets(request: Request):
 
     ranked = nav.ranking_engine.rank_vehicles(dest["lat"], dest["lon"])
     return {"targets": [vehicle.to_dict() for vehicle in ranked[:10]]}
+
+
+@router.get("/runtime", response_model=RuntimeStatusResponse)
+def get_runtime_status(request: Request):
+    """Return live runtime summary for dashboard operator surfaces."""
+    nav = _nav(request)
+    manager = nav.scheduler.camera_manager
+    cameras: list[RuntimeCameraSummary] = []
+    now = time.monotonic()
+
+    if manager is not None:
+        for camera_id, capture in manager.cameras.items():
+            stats = capture.stats
+            last_frame_time = float(stats.get("last_frame_time") or 0.0)
+            last_frame_age_s = round(now - last_frame_time, 1) if last_frame_time > 0 else None
+            cameras.append(
+                RuntimeCameraSummary(
+                    camera_id=camera_id,
+                    name=capture.config.name,
+                    status="Online" if capture.is_running else "Offline",
+                    fps=float(stats.get("measured_fps") or 0.0),
+                    queue_depth=int(stats.get("queue_depth") or 0),
+                    last_frame_age_s=last_frame_age_s,
+                )
+            )
+
+    return RuntimeStatusResponse(
+        pipeline_active=nav.scheduler.is_active,
+        navigating=nav.is_navigating,
+        arrived=nav.arrival_detector.has_arrived,
+        ws_clients=nav.ws_manager.client_count,
+        operator_gps=nav.current_pos,
+        cameras=cameras,
+    )
+
+
+@router.get("/events/recent", response_model=RecentEventsResponse)
+def get_recent_events(request: Request, event_type: str = "", limit: int = 25):
+    """Return recent WebSocket events for dashboard hydration on page load."""
+    nav = _nav(request)
+    if nav.event_publisher is None:
+        return RecentEventsResponse(total=0, events=[])
+
+    normalized_type = event_type.strip().upper() or None
+    events = nav.event_publisher.recent_events(normalized_type, limit)
+    return RecentEventsResponse(total=len(events), events=events)
+
+
+@router.get("/operator-profile", response_model=OperatorProfile)
+def get_operator_profile():
+    """Return persisted operator dashboard settings."""
+    return _load_operator_profile()
+
+
+@router.put("/operator-profile", response_model=OperatorProfile)
+def update_operator_profile(profile: OperatorProfile):
+    """Persist operator dashboard settings for future sessions."""
+    return _save_operator_profile(profile)
 
 
 @router.post("/detections/search", response_model=DetectionSearchResponse)
