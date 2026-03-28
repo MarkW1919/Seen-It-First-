@@ -52,7 +52,44 @@ export interface RankedVehicle {
   fingerprint:   string;
 }
 
+/** A plate detection row for the live detection table */
+export interface PlateDetection {
+  id:         string;           // unique row id (track_id + timestamp)
+  plate1:     string;           // primary OCR read
+  plate2:     string;           // secondary / alternate read (or same as plate1)
+  state:      string;           // US state abbreviation
+  camera_id:  string;           // e.g. "cam_1", "cam_3"
+  confidence: number;           // plate OCR confidence 0–1
+  is_hotlist: boolean;
+  timestamp:  number;           // unix epoch seconds
+  image_url:  string | null;    // evidence snapshot URL (future)
+}
+
 /** WebSocket event payloads */
 export type WsEvent =
   | { event: "ARRIVED"; lat: number; lon: number; destination: { lat: number; lon: number; display_name: string } | null }
-  | { event: "STATUS"; navigating: boolean; arrived: boolean };
+  | { event: "STATUS";  navigating: boolean; arrived: boolean }
+  | {
+      event:        "DETECTION";
+      track_id:     string;
+      plate_text:   string;
+      camera_id:    string;
+      plate_conf:   number;
+      vehicle_class: string;
+      vehicle_conf: number;
+      bbox:         number[];
+      timestamp:    number;
+      state?:       string;
+      image_url?:   string;
+    }
+  | {
+      event:        "ALERT";
+      plate:        string;
+      vehicle_class: string;
+      camera_id:    string;
+      confidence:   number;
+      timestamp:    number;
+      reason:       string;
+      priority:     string;
+      track_id:     string;
+    };

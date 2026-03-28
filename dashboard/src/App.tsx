@@ -1,5 +1,5 @@
-import NavigationPage from "./pages/NavigationPage";
+import Dashboard from "./pages/Dashboard";
 
 export default function App() {
-  return <NavigationPage />;
+  return <Dashboard />;
 }
